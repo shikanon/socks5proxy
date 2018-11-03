@@ -10,9 +10,10 @@ func main(){
 	listenAddr := flag.String("local", ":8888", "Input server listen address(Default 8888):")
 	serverAddr := flag.String("server", "", "Input server listen address:")
 	passwd := flag.String("passwd", "123456", "Input server proxy password:")
+	encrytype := flag.String("type", "random", "Input encryption type:")
 	flag.Parse()
 	if *serverAddr == ""{
 		log.Fatal("请输入正确的远程地址")
 	}
-	socks5proxy.Client(*listenAddr, *serverAddr, *passwd)
+	socks5proxy.Client(*listenAddr, *serverAddr, *encrytype, *passwd)
 }

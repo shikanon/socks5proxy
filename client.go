@@ -10,7 +10,7 @@ type TcpClient struct{
 	server *net.TCPAddr
 }
 
-func handleProxyRequest(localClient *net.TCPConn,serverAddr *net.TCPAddr, auth *socks5Auth){
+func handleProxyRequest(localClient *net.TCPConn,serverAddr *net.TCPAddr, auth socks5Auth){
 
     // 远程连接IO
     dstServer, err := net.DialTCP("tcp", nil, serverAddr)
@@ -27,9 +27,12 @@ func handleProxyRequest(localClient *net.TCPConn,serverAddr *net.TCPAddr, auth *
     SecureCopy(dstServer, localClient, auth.Decrypt)
 }
 
-func Client(listenAddrString string, serverAddrString string, passwd string){
+func Client(listenAddrString string, serverAddrString string, encrytype string, passwd string){
     //所有客户服务端的流都加密,
-    auth := CreateAuth(passwd)
+    auth,err := CreateAuth(encrytype, passwd)
+    if err != nil {
+		log.Fatal(err)
+    }
     log.Printf("你的密码是:%s ,请保管好你的密码", passwd)
 
     // proxy地址
