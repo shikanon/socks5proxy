@@ -2,6 +2,7 @@ package socks5proxy
 
 import (
 	"testing"
+	"time"
 	"math/rand"
 	"github.com/stretchr/testify/assert"
 	"sync"
@@ -20,10 +21,12 @@ func connect(packSize int){
 	go Server("127.0.0.1:18189", "random", "abcedfg")
 	go Client("127.0.0.1:18190", "127.0.0.1:18189", "random", "abcedfg")
 
+	time.Sleep(1 * time.Second)
+
 	// 连接
 	conn, err := net.Dial("tcp", "127.0.0.1:18190")
 	if err != nil {
-		log.Fatalln(err)
+		log.Fatal(err)
 	}
 	defer conn.Close()
 
