@@ -14,7 +14,6 @@ func handleProxyRequest(localClient *net.TCPConn,serverAddr *net.TCPAddr, auth s
 
     // 远程连接IO
     dstServer, err := net.DialTCP("tcp", nil, serverAddr)
-    defer dstServer.Close()
     if err != nil {
         log.Print("远程服务器地址连接错误!!!")
         log.Print(err)
