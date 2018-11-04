@@ -16,6 +16,7 @@ func handleProxyRequest(localClient *net.TCPConn,serverAddr *net.TCPAddr, auth s
     dstServer, err := net.DialTCP("tcp", nil, serverAddr)
     defer dstServer.Close()
     if err != nil {
+        log.Print("远程服务器地址连接错误!!!")
         log.Print(err)
         return 
     }
@@ -33,18 +34,20 @@ func Client(listenAddrString string, serverAddrString string, encrytype string, 
     if err != nil {
 		log.Fatal(err)
     }
-    log.Printf("你的密码是:%s ,请保管好你的密码", passwd)
+    log.Printf("你的密码是: %s ,请保管好你的密码", passwd)
 
     // proxy地址
     serverAddr, err := net.ResolveTCPAddr("tcp", serverAddrString)
 	if err != nil {
 		log.Fatal(err)
     }
+    log.Printf("连接远程服务器: %s ....", serverAddrString)
 
     listenAddr, err := net.ResolveTCPAddr("tcp", listenAddrString)
 	if err != nil {
 		log.Fatal(err)
-	}
+    }
+    log.Printf("监听本地端口: %s ", listenAddrString)
 	
     listener, err := net.ListenTCP("tcp", listenAddr)
     if err != nil {

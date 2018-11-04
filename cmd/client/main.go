@@ -15,5 +15,6 @@ func main(){
 	if *serverAddr == ""{
 		log.Fatal("请输入正确的远程地址")
 	}
+	log.Println("客户端正在启动...")
 	socks5proxy.Client(*listenAddr, *serverAddr, *encrytype, *passwd)
 }

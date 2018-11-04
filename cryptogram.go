@@ -98,7 +98,7 @@ func CreateSimpleCipher(passwd string) (*DefaultAuth, error){
 
 func CreateRandomCipher(passwd string) (*DefaultAuth, error){
 	var s *DefaultAuth
-	// 采用最简单的凯撒位移法
+	// 采用随机编码表进行加密
 	sumint := 0
 	if len(passwd) == 0 {
 		return nil, errors.New("密码不能为空")
@@ -108,6 +108,7 @@ func CreateRandomCipher(passwd string) (*DefaultAuth, error){
 	}
 	var encodeString [256]byte
 	var decodeString [256]byte
+	// 创建随机数 (a*x + b) mod m 
 	for i := 0; i < 256; i++{
 		encodeString[i] = byte((RANDOM_A*sumint+RANDOM_B)%RANDOM_M)
 		decodeString[(RANDOM_A*sumint+RANDOM_B)%RANDOM_M] = byte(i)

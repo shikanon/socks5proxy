@@ -76,7 +76,9 @@ func Server(listenAddrString string, encrytype string, passwd string) {
     listenAddr, err := net.ResolveTCPAddr("tcp", listenAddrString)
 	if err != nil {
         log.Fatal(err)
-	}
+    }
+    log.Printf("监听服务器端口: %s ", listenAddrString)
+
     listener,err := net.ListenTCP("tcp", listenAddr)
     if err != nil {
         log.Fatal(err)
