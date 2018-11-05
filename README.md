@@ -17,6 +17,7 @@ cmd/client/main.go  `客户端主启动程`
 
 - [SOCKS5协议介绍](./docs/socks5.md)
 - [加密算法介绍](./docs/cryptogram.md)
+- [软件下载及版本说明](./docs/release.md)
 
 
 
