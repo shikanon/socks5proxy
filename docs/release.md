@@ -9,7 +9,7 @@
 
 ### 下载
 
-[vpn_client_linux_amd64_v0.1](https://pan.baidu.com/s/1r4ZEleOu4RgaSldkSfhHTQ)
-[vpn_server_linux_amd64_v0.1](https://pan.baidu.com/s/1TAZmSqtRZME55q-ROGFsJQ)
-[vpn_client_windows_amd64_v0.1](https://pan.baidu.com/s/1fJpAyLs9jjx23Q0itPrtzw)
-[vpn_server_windows_amd64_v0.1](https://pan.baidu.com/s/1AGp-erpri3k0NkSrEGCoIQ)
+- [vpn_client_linux_amd64_v0.1](https://pan.baidu.com/s/1r4ZEleOu4RgaSldkSfhHTQ)
+- [vpn_server_linux_amd64_v0.1](https://pan.baidu.com/s/1TAZmSqtRZME55q-ROGFsJQ)
+- [vpn_client_windows_amd64_v0.1](https://pan.baidu.com/s/1fJpAyLs9jjx23Q0itPrtzw)
+- [vpn_server_windows_amd64_v0.1](https://pan.baidu.com/s/1AGp-erpri3k0NkSrEGCoIQ)
