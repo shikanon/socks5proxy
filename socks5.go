@@ -40,6 +40,9 @@ type ProtocolVersion struct {
 
 func (s *ProtocolVersion) HandleHandshake(b []byte) ([]byte, error) {
     n := len(b)
+    if n < 3{
+        return nil, errors.New("协议错误, sNMETHODS不对")
+    }
     s.VER = b[0] //ReadByte reads and returns a single byte，第一个参数为socks的版本号
     if s.VER != 0x05 {
         return nil, errors.New("协议错误, version版本不为5!")
