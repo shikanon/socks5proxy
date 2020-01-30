@@ -3,7 +3,6 @@ package socks5proxy
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"log"
 	"net"
 	"net/url"
@@ -64,7 +63,6 @@ func handleProxyRequest(localClient *net.TCPConn, serverAddr *net.TCPAddr, auth 
 			return
 		}
 		localReq := buff[:n]
-		log.Print(fmt.Sprintf("fontend 1024: %v", string(localReq)))
 		j := 0
 		z := 0
 		httpreq := []string{}
@@ -96,7 +94,6 @@ func handleProxyRequest(localClient *net.TCPConn, serverAddr *net.TCPAddr, auth 
 			return
 		}
 
-		log.Print("dstAddr:", dstAddr, "  dstPort:", dstPort)
 		resp = []byte{0x05, 0x01, 0x00, 0x03}
 		// 域名
 		// dstAddrLenBuff := bytes.NewBuffer(make([]byte, 1))
@@ -115,10 +112,7 @@ func handleProxyRequest(localClient *net.TCPConn, serverAddr *net.TCPAddr, auth 
 		}
 		binary.Write(dstPortBuff, binary.BigEndian, dstPortInt)
 		dstPortBytes := dstPortBuff.Bytes() // int为8字节
-		log.Print("dstPortBytes", dstPortBytes)
 		resp = append(resp, dstPortBytes[len(dstPortBytes)-2:]...)
-		log.Print(dstPortInt, dstPortBytes[len(dstPortBytes)-2:])
-		log.Print(string(resp[5 : len(resp)-2]))
 		n, err = auth.EncodeWrite(dstServer, resp)
 		if err != nil {
 			log.Print(dstServer.RemoteAddr(), err)
