@@ -1,8 +1,13 @@
-# Socks5 Proxy
+# Socks5Proxy
+
+[![Go Report Card](https://goreportcard.com/badge/github.com/shikanon/socks5proxy)](https://goreportcard.com/report/github.com/shikanon/socks5proxy)
 ------
+
 
 用golang 实现了一个简单的socks5协议来实现代理转发，主要应用场景是給公司内部做VPN登陆，提供内网访问。
 (声明：由于采用的是原始的socks5协议，并没有对协议做改造加工，并不一定能防范GFW的主动探测，请勿用于非法用途)
+
+[<img src="https://github.com/shikanon/socks5proxy/img/logo.png" align="right" width="300">][Socks5Proxy]
 
 文件结构
 ```
