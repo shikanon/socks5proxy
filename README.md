@@ -1,4 +1,6 @@
-<img src="./img/logo.png" align="left" width="600">
+<img src="./img/logo.png" width="600">
+
+# Socks5Proxy
 
 [![GitHub license](https://img.shields.io/github/license/shikanon/socks5proxy)](https://github.com/shikanon/socks5proxy/blob/master/LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/shikanon/socks5proxy)](https://github.com/shikanon/socks5proxy/stargazers)
