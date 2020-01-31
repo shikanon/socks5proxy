@@ -1,12 +1,14 @@
-# Socks5Proxy
+<img src="./img/logo.png" align="left" width="600">
 
+[![GitHub license](https://img.shields.io/github/license/shikanon/socks5proxy)](https://github.com/shikanon/socks5proxy/blob/master/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/shikanon/socks5proxy)](https://github.com/shikanon/socks5proxy/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/shikanon/socks5proxy)](https://github.com/shikanon/socks5proxy/network)
+[![Language](https://img.shields.io/badge/Language-Go-blue.svg)](https://golang.org/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/shikanon/socks5proxy)](https://goreportcard.com/report/github.com/shikanon/socks5proxy)
 
 
-用golang 实现了一个简单的socks5协议来实现代理转发，主要应用场景是給公司内部做VPN登陆，提供内网访问。
-(声明：由于采用的是原始的socks5协议，并没有对协议做改造加工，并不一定能防范GFW的主动探测，请勿用于非法用途)
+用golang 实现了一个简单的socks5协议来实现代理转发，主要应用场景是給公司内部做VPN登陆，提供内网访问。*(声明：由于采用的是原始的socks5协议，并没有对协议做改造加工，并不一定能防范GFW的主动探测，请勿用于非法用途)*
 
-[<img src="./img/logo.png" align="right" width="300">][Socks5Proxy]
 
 文件结构
 ```

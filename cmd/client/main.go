@@ -12,7 +12,7 @@ func main() {
 	serverAddr := flag.String("server", "", "Input server listen address:")
 	passwd := flag.String("passwd", "123456", "Input server proxy password:")
 	encrytype := flag.String("type", "random", "Input encryption type:")
-	recvHTTPProto := flag.String("recv", "http", "use http or sock5 protocal(default http):")
+	recvHTTPProto := flag.String("recv", "http", "use http or sock5 protocol(default http):")
 	flag.Parse()
 	if *serverAddr == "" {
 		log.Fatal("请输入正确的远程地址")
