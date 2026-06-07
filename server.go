@@ -6,9 +6,9 @@ import (
 	"sync"
 )
 
-func handleClientRequest(client *net.TCPConn, auth socks5Auth) {
+func handleClientRequest(client *net.TCPConn, auth socks5Auth) error {
 	if client == nil {
-		return
+		return nil
 	}
 	defer client.Close()
 
@@ -21,8 +21,7 @@ func handleClientRequest(client *net.TCPConn, auth socks5Auth) {
 	resp, err := proto.HandleHandshake(buff[0:n])
 	auth.EncodeWrite(client, resp) //加密
 	if err != nil {
-		log.Print(client.RemoteAddr(), err)
-		return
+		return err
 	}
 
 	//获取客户端代理的请求
@@ -31,8 +30,7 @@ func handleClientRequest(client *net.TCPConn, auth socks5Auth) {
 	resp, err = request.LSTRequest(buff[0:n])
 	auth.EncodeWrite(client, resp)
 	if err != nil {
-		log.Print(client.RemoteAddr(), err)
-		return
+		return err
 	}
 
 	log.Println(client.RemoteAddr(), request.DSTDOMAIN, request.DSTADDR, request.DSTPORT)
@@ -40,8 +38,7 @@ func handleClientRequest(client *net.TCPConn, auth socks5Auth) {
 	// 连接真正的远程服务
 	dstServer, err := net.DialTCP("tcp", nil, request.RAWADDR)
 	if err != nil {
-		log.Print(client.RemoteAddr(), err)
-		return
+		return err
 	}
 	defer dstServer.Close()
 
@@ -61,33 +58,39 @@ func handleClientRequest(client *net.TCPConn, auth socks5Auth) {
 	}()
 	wg.Wait()
 
+	return nil
 }
 
-func Server(listenAddrString string, encrytype string, passwd string) {
+func Server(listenAddrString string, encrytype string, passwd string) error {
 	//所有客户服务端的流都加密,
 	auth, err := CreateAuth(encrytype, passwd)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// 监听客户端
 	listenAddr, err := net.ResolveTCPAddr("tcp", listenAddrString)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	log.Printf("监听服务器端口: %s ", listenAddrString)
 
 	listener, err := net.ListenTCP("tcp", listenAddr)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer listener.Close()
 
 	for {
 		conn, err := listener.AcceptTCP()
 		if err != nil {
-			log.Fatal(err)
+			log.Print(err)
+			continue
 		}
-		go handleClientRequest(conn, auth)
+		go func(clientConn *net.TCPConn) {
+			if err := handleClientRequest(clientConn, auth); err != nil {
+				log.Print(clientConn.RemoteAddr(), err)
+			}
+		}(conn)
 	}
 }

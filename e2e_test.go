@@ -23,7 +23,7 @@ func TestConncet(t *testing.T) {
 	// 连接
 	conn, err := net.Dial("tcp", "127.0.0.1:18190")
 	if err != nil {
-		log.Fatalln(err)
+		t.Fatal(err)
 	}
 	defer conn.Close()
 

@@ -15,5 +15,7 @@ func main() {
 		log.Fatal("请通过 -passwd 设置一个强密码（不能为空）")
 	}
 	log.Println("服务器正在启动...")
-	socks5proxy.Server(*listenAddr, *encrytype, *passwd)
+	if err := socks5proxy.Server(*listenAddr, *encrytype, *passwd); err != nil {
+		log.Fatal(err)
+	}
 }
