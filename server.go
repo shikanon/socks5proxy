@@ -1,6 +1,7 @@
 package socks5proxy
 
 import (
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -22,13 +23,52 @@ func handleHandshake(client io.ReadWriter, auth socks5Auth, buff []byte, proto *
 	return err
 }
 
-func handleRequest(client io.ReadWriter, auth socks5Auth, buff []byte, request *Socks5Resolution) error {
-	n, err := auth.DecodeRead(client, buff)
+func readEncryptedFull(reader io.Reader, auth socks5Auth, size int) ([]byte, error) {
+	buf := make([]byte, size)
+	_, err := io.ReadFull(reader, buf)
+	if err != nil {
+		return nil, err
+	}
+	if err := auth.Decrypt(buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+func handleRequest(client io.ReadWriter, auth socks5Auth, request *Socks5Resolution) error {
+	header, err := readEncryptedFull(client, auth, 4)
 	if err != nil {
 		return err
 	}
 
-	resp, err := request.LSTRequest(buff[:n])
+	payload := append([]byte{}, header...)
+	var remaining int
+	switch header[3] {
+	case 1:
+		remaining = net.IPv4len + 2
+	case 3:
+		domainLenBytes, err := readEncryptedFull(client, auth, 1)
+		if err != nil {
+			return err
+		}
+		if domainLenBytes[0] == 0 {
+			return errors.New("域名长度错误")
+		}
+		payload = append(payload, domainLenBytes...)
+		remaining = int(domainLenBytes[0]) + 2
+	case 4:
+		remaining = net.IPv6len + 2
+	default:
+		return errors.New("IP地址错误")
+	}
+
+	tail, err := readEncryptedFull(client, auth, remaining)
+	if err != nil {
+		return err
+	}
+	payload = append(payload, tail...)
+
+	resp, err := request.LSTRequest(payload)
 	if err != nil {
 		return err
 	}
@@ -54,7 +94,7 @@ func handleClientRequest(client *net.TCPConn, auth socks5Auth) error {
 
 	//获取客户端代理的请求
 	var request Socks5Resolution
-	if err := handleRequest(client, auth, buff, &request); err != nil {
+	if err := handleRequest(client, auth, &request); err != nil {
 		return err
 	}
 
