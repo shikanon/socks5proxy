@@ -23,9 +23,7 @@ type DefaultAuth struct {
 	Decode *[256]byte //解码表
 }
 
-/**
-加密方法：根据编码表将字符串进行编码
-**/
+// 这些变换仅用于流量混淆，不提供现代密码学意义上的机密性或完整性。
 
 func (s *DefaultAuth) Encrypt(b []byte) error {
 	for i, v := range b {
@@ -73,7 +71,7 @@ func (s *DefaultAuth) DecodeRead(c io.ReadWriter, b []byte) (int, error) {
 
 func CreateSimpleCipher(passwd string) (*DefaultAuth, error) {
 	var s *DefaultAuth
-	// 采用最简单的凯撒位移法
+	// 使用简单的凯撒位移做流量混淆。
 	sumint := 0
 	if len(passwd) == 0 {
 		return nil, errors.New("密码不能为空")
@@ -97,7 +95,7 @@ func CreateSimpleCipher(passwd string) (*DefaultAuth, error) {
 
 func CreateRandomCipher(passwd string) (*DefaultAuth, error) {
 	var s *DefaultAuth
-	// 采用随机编码表进行加密
+	// 使用线性同余生成的替换表做流量混淆。
 	sumint := 0
 	if len(passwd) == 0 {
 		return nil, errors.New("密码不能为空")
@@ -120,7 +118,7 @@ func CreateRandomCipher(passwd string) (*DefaultAuth, error) {
 	return s, nil
 }
 
-// 创建认证证书
+// 创建流量混淆器。当前实现不是安全通道。
 func CreateAuth(encrytype string, passwd string) (socks5Auth, error) {
 	if len(passwd) == 0 {
 		return nil, errors.New("密码不能为空")
@@ -134,7 +132,7 @@ func CreateAuth(encrytype string, passwd string) (socks5Auth, error) {
 	case "random":
 		s, err = CreateRandomCipher(passwd)
 	default:
-		return nil, errors.New("错误加密方法类型！")
+		return nil, errors.New("错误混淆类型！")
 	}
 
 	if err != nil {
@@ -143,7 +141,7 @@ func CreateAuth(encrytype string, passwd string) (socks5Auth, error) {
 	return s, nil
 }
 
-// 加密io复制，可接收加密函数作为参数
+// SecureCopy 对有效负载做流量混淆后再转发。
 func SecureCopy(src io.ReadWriteCloser, dst io.ReadWriteCloser, secure func(b []byte) error) (written int64, err error) {
 	size := 1024
 	buf := make([]byte, size)
