@@ -59,6 +59,8 @@ cmd/client/main.go  `客户端主启动程`
         Input server listen address, for example: 16.158.6.16:18181
   -type string #设置流量混淆类型
     	Input traffic obfuscation type (simple/random, not secure encryption): (default "random")
+  -recv string #设置上游协议模式
+    	Upstream protocol mode: http or socks5 (default http)
 ```
 
 ## TODO
