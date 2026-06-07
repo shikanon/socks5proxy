@@ -149,8 +149,11 @@ func SecureCopy(src io.ReadWriteCloser, dst io.ReadWriteCloser, secure func(b []
 	buf := make([]byte, size)
 	for {
 		nr, er := src.Read(buf)
-		secure(buf)
 		if nr > 0 {
+			if secureErr := secure(buf[:nr]); secureErr != nil {
+				err = secureErr
+				break
+			}
 			nw, ew := dst.Write(buf[0:nr])
 			if nw > 0 {
 				written += int64(nw)
