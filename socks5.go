@@ -201,27 +201,48 @@ func (s *Socks5Resolution) LSTRequest(b []byte) ([]byte, error) {
 	s.RSV = b[2] //RSV保留字端，值长度为1个字节
 
 	s.ATYP = b[3]
+	addrEnd := 0
 
 	switch s.ATYP {
 	case 1:
 		//	IP V4 address: X'01'
+		if n != 4+net.IPv4len+2 {
+			return nil, errors.New("请求协议长度错误")
+		}
 		s.DSTADDR = b[4 : 4+net.IPv4len]
+		addrEnd = 4 + net.IPv4len
 	case 3:
 		//	DOMAINNAME: X'03'
-		s.DSTDOMAIN = string(b[5 : n-2])
+		if n < 5 {
+			return nil, errors.New("请求协议错误")
+		}
+		domainLen := int(b[4])
+		if domainLen == 0 {
+			return nil, errors.New("域名长度错误")
+		}
+		expectedLen := 4 + 1 + domainLen + 2
+		if n != expectedLen {
+			return nil, errors.New("请求协议长度错误")
+		}
+		s.DSTDOMAIN = string(b[5 : 5+domainLen])
 		ipAddr, err := net.ResolveIPAddr("ip", s.DSTDOMAIN)
 		if err != nil {
 			return nil, err
 		}
 		s.DSTADDR = ipAddr.IP
+		addrEnd = 5 + domainLen
 	case 4:
 		//	IP V6 address: X'04'
+		if n != 4+net.IPv6len+2 {
+			return nil, errors.New("请求协议长度错误")
+		}
 		s.DSTADDR = b[4 : 4+net.IPv6len]
+		addrEnd = 4 + net.IPv6len
 	default:
 		return nil, errors.New("IP地址错误")
 	}
 
-	s.DSTPORT = binary.BigEndian.Uint16(b[n-2 : n])
+	s.DSTPORT = binary.BigEndian.Uint16(b[addrEnd : addrEnd+2])
 	// DSTADDR全部换成IP地址，可以防止DNS污染和封杀
 	s.RAWADDR = &net.TCPAddr{
 		IP:   s.DSTADDR,
