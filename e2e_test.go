@@ -1,9 +1,11 @@
 package socks5proxy
 
 import (
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"sync"
 	"testing"
@@ -55,6 +57,12 @@ func TestHTTPConnect(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer target.Close()
+
 	ProxyURI, err := url.ParseRequestURI("http://127.0.0.1:18290")
 	if err != nil {
 		log.Panic(err)
@@ -68,7 +76,7 @@ func TestHTTPConnect(t *testing.T) {
 	}
 	// http.ListenAndServe
 
-	req, err := http.NewRequest("GET", "http://www.baidu.com/", nil)
+	req, err := http.NewRequest("GET", target.URL, nil)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -77,10 +85,10 @@ func TestHTTPConnect(t *testing.T) {
 		log.Panic(err)
 	}
 	assert.Equal(t, resp.StatusCode, 200)
-	var respbody []byte
-	n, err := resp.Body.Read(respbody)
+	defer resp.Body.Close()
+	respbody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Panic(err)
 	}
-	log.Print(string(respbody[:n]))
+	log.Print(string(respbody))
 }
