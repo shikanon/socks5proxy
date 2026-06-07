@@ -65,5 +65,10 @@ cmd/client/main.go  `客户端主启动程`
 
 ## TODO
 
-* [ * ] 混淆加密
-* [ * ] 客户端
+- [x] 明确 `simple` / `random` 仅用于流量混淆，不作为安全加密承诺（[#23](https://github.com/shikanon/socks5proxy/issues/23)）
+- [x] 迁移 CI 到 GitHub Actions，并补齐格式化 / 测试 / vet / staticcheck（[#25](https://github.com/shikanon/socks5proxy/issues/25)）
+- [x] 将发布物迁移到 GitHub Releases，并提供 `SHA256SUMS`（[#28](https://github.com/shikanon/socks5proxy/issues/28)）
+- [ ] 补充 README 的安全声明与威胁模型说明（[#29](https://github.com/shikanon/socks5proxy/issues/29)）
+- [ ] 说明客户端与服务端同机部署的使用方式（[#2](https://github.com/shikanon/socks5proxy/issues/2)）
+- [ ] 排查并缓解 `socket: too many open files` 问题（[#3](https://github.com/shikanon/socks5proxy/issues/3)）
+- [ ] 更新下载与使用说明，覆盖最新发布方式与问题排查入口（[#4](https://github.com/shikanon/socks5proxy/issues/4)）
