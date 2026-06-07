@@ -78,7 +78,7 @@ func CreateSimpleCipher(passwd string) (*DefaultAuth, error) {
 	if len(passwd) == 0 {
 		return nil, errors.New("密码不能为空")
 	}
-	for v := range passwd {
+	for _, v := range []byte(passwd) {
 		sumint += int(v)
 	}
 	sumint = sumint % 256
@@ -102,7 +102,7 @@ func CreateRandomCipher(passwd string) (*DefaultAuth, error) {
 	if len(passwd) == 0 {
 		return nil, errors.New("密码不能为空")
 	}
-	for v := range passwd {
+	for _, v := range []byte(passwd) {
 		sumint += int(v)
 	}
 	var encodeString [256]byte

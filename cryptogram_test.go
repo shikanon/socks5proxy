@@ -49,3 +49,25 @@ func TestRandomCipher(t *testing.T) {
 	}
 	assert.Equal(t, b, c)
 }
+
+func TestCipherDerivationUsesPasswordContent(t *testing.T) {
+	simpleA, err := CreateSimpleCipher("aaaaaa")
+	if err != nil {
+		log.Panic(err)
+	}
+	simpleB, err := CreateSimpleCipher("bbbbbb")
+	if err != nil {
+		log.Panic(err)
+	}
+	randomA, err := CreateRandomCipher("aaaaaa")
+	if err != nil {
+		log.Panic(err)
+	}
+	randomB, err := CreateRandomCipher("bbbbbb")
+	if err != nil {
+		log.Panic(err)
+	}
+
+	assert.NotEqual(t, simpleA.Encode, simpleB.Encode)
+	assert.NotEqual(t, randomA.Encode, randomB.Encode)
+}
