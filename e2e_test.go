@@ -16,7 +16,7 @@ import (
 
 func TestConncet(t *testing.T) {
 	go Server("127.0.0.1:18189", "random", "abcedfg")
-	go Client("127.0.0.1:18190", "127.0.0.1:18189", "random", "abcedfg", "sock5")
+	go Client("127.0.0.1:18190", "127.0.0.1:18189", "random", "abcedfg", "socks5")
 
 	time.Sleep(1 * time.Second)
 

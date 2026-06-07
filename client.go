@@ -135,7 +135,7 @@ func handleProxyRequest(localClient *net.TCPConn, serverAddr *net.TCPAddr, auth 
 		}()
 
 		wg.Wait()
-	} else {
+	} else if recvHTTPProto == "socks5" {
 		// 本地的内容copy到远程端
 		go func() {
 			defer wg.Done()
@@ -148,6 +148,8 @@ func handleProxyRequest(localClient *net.TCPConn, serverAddr *net.TCPAddr, auth 
 			SecureCopy(dstServer, localClient, auth.Decrypt)
 		}()
 		wg.Wait()
+	} else {
+		return errors.New("recv 参数仅支持 http 或 socks5")
 	}
 
 	return nil
