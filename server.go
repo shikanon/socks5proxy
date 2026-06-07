@@ -1,10 +1,41 @@
 package socks5proxy
 
 import (
+	"io"
 	"log"
 	"net"
 	"sync"
 )
+
+func handleHandshake(client io.ReadWriter, auth socks5Auth, buff []byte, proto *ProtocolVersion) error {
+	n, err := auth.DecodeRead(client, buff)
+	if err != nil {
+		return err
+	}
+
+	resp, err := proto.HandleHandshake(buff[:n])
+	if err != nil {
+		return err
+	}
+
+	_, err = auth.EncodeWrite(client, resp)
+	return err
+}
+
+func handleRequest(client io.ReadWriter, auth socks5Auth, buff []byte, request *Socks5Resolution) error {
+	n, err := auth.DecodeRead(client, buff)
+	if err != nil {
+		return err
+	}
+
+	resp, err := request.LSTRequest(buff[:n])
+	if err != nil {
+		return err
+	}
+
+	_, err = auth.EncodeWrite(client, resp)
+	return err
+}
 
 func handleClientRequest(client *net.TCPConn, auth socks5Auth) error {
 	if client == nil {
@@ -17,19 +48,13 @@ func handleClientRequest(client *net.TCPConn, auth socks5Auth) error {
 
 	// 认证协商
 	var proto ProtocolVersion
-	n, err := auth.DecodeRead(client, buff) //解密
-	resp, err := proto.HandleHandshake(buff[0:n])
-	auth.EncodeWrite(client, resp) //加密
-	if err != nil {
+	if err := handleHandshake(client, auth, buff, &proto); err != nil {
 		return err
 	}
 
 	//获取客户端代理的请求
 	var request Socks5Resolution
-	n, err = auth.DecodeRead(client, buff)
-	resp, err = request.LSTRequest(buff[0:n])
-	auth.EncodeWrite(client, resp)
-	if err != nil {
+	if err := handleRequest(client, auth, buff, &request); err != nil {
 		return err
 	}
 
