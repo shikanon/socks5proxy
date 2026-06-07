@@ -53,7 +53,7 @@ func (s *ProtocolVersion) HandleHandshake(b []byte) ([]byte, error) {
 	}
 	s.VER = b[0] //ReadByte reads and returns a single byte，第一个参数为socks的版本号
 	if s.VER != 0x05 {
-		return nil, errors.New("协议错误, version版本不为5!")
+		return nil, errors.New("协议错误, version版本不为5")
 	}
 	s.NMETHODS = b[1] //nmethods是记录methods的长度的。nmethods的长度是1个字节
 	if n != int(2+s.NMETHODS) {
@@ -196,7 +196,7 @@ func (s *Socks5Resolution) LSTRequest(b []byte) ([]byte, error) {
 
 	s.CMD = b[1]
 	if s.CMD != 1 {
-		return nil, errors.New("客户端请求类型不为代理连接, 其他功能暂时不支持.")
+		return nil, errors.New("客户端请求类型不为代理连接, 其他功能暂时不支持")
 	}
 	s.RSV = b[2] //RSV保留字端，值长度为1个字节
 

@@ -12,11 +12,6 @@ import (
 	"sync"
 )
 
-type TcpClient struct {
-	conn   *net.TCPConn
-	server *net.TCPAddr
-}
-
 func handleProxyRequest(localClient *net.TCPConn, serverAddr *net.TCPAddr, auth socks5Auth, recvHTTPProto string) error {
 
 	// 远程连接IO
@@ -105,7 +100,7 @@ func handleProxyRequest(localClient *net.TCPConn, serverAddr *net.TCPAddr, auth 
 		binary.Write(dstPortBuff, binary.BigEndian, dstPortInt)
 		dstPortBytes := dstPortBuff.Bytes() // int为8字节
 		resp = append(resp, dstPortBytes[len(dstPortBytes)-2:]...)
-		n, err = auth.EncodeWrite(dstServer, resp)
+		_, err = auth.EncodeWrite(dstServer, resp)
 		if err != nil {
 			return err
 		}
