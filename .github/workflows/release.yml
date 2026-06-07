@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build release artifacts
+        run: |
+          mkdir -p dist
+          for os in linux windows; do
+            for component in client server; do
+              ext=""
+              if [ "$os" = "windows" ]; then
+                ext=".exe"
+              fi
+              GOOS="$os" GOARCH=amd64 go build \
+                -trimpath \
+                -ldflags="-s -w" \
+                -o "dist/socks5proxy_${component}_${os}_amd64${ext}" \
+                "./cmd/${component}"
+            done
+          done
+
+      - name: Generate SHA256 checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+
+      - name: Install cosign
+        if: ${{ secrets.COSIGN_PRIVATE_KEY != '' }}
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign checksums
+        if: ${{ secrets.COSIGN_PRIVATE_KEY != '' }}
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+        run: |
+          cosign sign-blob \
+            --key env://COSIGN_PRIVATE_KEY \
+            --output-signature dist/SHA256SUMS.sig \
+            dist/SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
