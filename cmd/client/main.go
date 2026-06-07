@@ -22,5 +22,7 @@ func main() {
 	}
 	log.Println("客户端正在启动...")
 	log.Println(&recvHTTPProto)
-	socks5proxy.Client(*listenAddr, *serverAddr, *encrytype, *passwd, *recvHTTPProto)
+	if err := socks5proxy.Client(*listenAddr, *serverAddr, *encrytype, *passwd, *recvHTTPProto); err != nil {
+		log.Fatal(err)
+	}
 }
