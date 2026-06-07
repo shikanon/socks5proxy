@@ -9,7 +9,7 @@ import (
 func main() {
 	listenAddr := flag.String("local", ":18888", "Input server listen address(Default 8888):")
 	passwd := flag.String("passwd", "", "Input server proxy password:")
-	encrytype := flag.String("type", "random", "Input encryption type:")
+	encrytype := flag.String("type", "random", "Input traffic obfuscation type (simple/random, not secure encryption):")
 	flag.Parse()
 	if *passwd == "" {
 		log.Fatal("请通过 -passwd 设置一个强密码（不能为空）")
