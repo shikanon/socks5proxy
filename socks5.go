@@ -3,7 +3,6 @@ package socks5proxy
 import (
 	"encoding/binary"
 	"errors"
-	"log"
 	"net"
 )
 
@@ -18,25 +17,29 @@ type Protocol interface {
 	SentHandshake(conn net.Conn) error
 }
 
-/**
-    The localConn connects to the dstServer, and sends a ver
-    identifier/method selection message:
-                +----+----------+----------+
-                |VER | NMETHODS | METHODS  |
-                +----+----------+----------+
-                | 1  |    1     | 1 to 255 |
-                +----+----------+----------+
-    The VER field is set to X'05' for this ver of the protocol.  The
-    NMETHODS field contains the number of method identifier octets that
-    appear in the METHODS field.
-    METHODS常见的几种方式如下:
-    1>.数字“0”：表示不需要用户名或者密码验证；
-    2>.数字“1”：GSSAPI是SSH支持的一种验证方式；
-    3>.数字“2”：表示需要用户名和密码进行验证；
-    4>.数字“3”至“7F”：表示用于IANA 分配(IANA ASSIGNED)
-    5>.数字“80”至“FE”表示私人方法保留(RESERVED FOR PRIVATE METHODS)
-    4>.数字“FF”：不支持所有的验证方式，无法进行连接
-**/
+/*
+*
+
+	The localConn connects to the dstServer, and sends a ver
+	identifier/method selection message:
+	            +----+----------+----------+
+	            |VER | NMETHODS | METHODS  |
+	            +----+----------+----------+
+	            | 1  |    1     | 1 to 255 |
+	            +----+----------+----------+
+	The VER field is set to X'05' for this ver of the protocol.  The
+	NMETHODS field contains the number of method identifier octets that
+	appear in the METHODS field.
+	METHODS常见的几种方式如下:
+	1>.数字“0”：表示不需要用户名或者密码验证；
+	2>.数字“1”：GSSAPI是SSH支持的一种验证方式；
+	3>.数字“2”：表示需要用户名和密码进行验证；
+	4>.数字“3”至“7F”：表示用于IANA 分配(IANA ASSIGNED)
+	5>.数字“80”至“FE”表示私人方法保留(RESERVED FOR PRIVATE METHODS)
+	4>.数字“FF”：不支持所有的验证方式，无法进行连接
+
+*
+*/
 type ProtocolVersion struct {
 	VER      uint8
 	NMETHODS uint8
@@ -125,7 +128,6 @@ func (s *Socks5AuthUPasswd) HandleAuth(b []byte) ([]byte, error) {
 	s.UNAME = string(b[2 : 2+s.ULEN])
 	s.PLEN = b[2+s.ULEN+1]
 	s.PASSWD = string(b[n-int(s.PLEN) : n])
-	log.Println(s.UNAME, s.PASSWD)
 
 	/**
 	  回应客户端,响应客户端连接成功
@@ -148,24 +150,27 @@ func (s *Socks5AuthUPasswd) HandleAuth(b []byte) ([]byte, error) {
 	return resp, nil
 }
 
-/**
-    结构：
-    +----+-----+-------+------+----------+----------+
-    |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
-    +----+-----+-------+------+----------+----------+
-    | 1  |  1  | X'00' |  1   | Variable |    2     |
-    +----+-----+-------+------+----------+----------+
-    cmd代表客户端请求的类型，值长度也是1个字节，有三种类型：
-        1>.数字“1”：表示客户端需要你帮忙代理连接，即CONNECT ；
-        2>.数字“2”：表示让你代理服务器，帮他建立端口，即BIND ；
-        3>.数字“3”：表示UDP连接请求用来建立一个在UDP延迟过程中操作UDP数据报的连接，即UDP ASSOCIATE；
-    ATYP代表请求的远程服务器地址类型，它是一个可变参数，但是它值的长度1个字节，
-    有三种类型：
-        1>.数字“1”：表示是一个IPV4地址（IP V4 address）；
-        2>.数字“3”：表示是一个域名（DOMAINNAME）；
-        3>.数字“4”：表示是一个IPV6地址（IP V6 address）；
+/*
+*
 
-**/
+	结构：
+	+----+-----+-------+------+----------+----------+
+	|VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+	+----+-----+-------+------+----------+----------+
+	| 1  |  1  | X'00' |  1   | Variable |    2     |
+	+----+-----+-------+------+----------+----------+
+	cmd代表客户端请求的类型，值长度也是1个字节，有三种类型：
+	    1>.数字“1”：表示客户端需要你帮忙代理连接，即CONNECT ；
+	    2>.数字“2”：表示让你代理服务器，帮他建立端口，即BIND ；
+	    3>.数字“3”：表示UDP连接请求用来建立一个在UDP延迟过程中操作UDP数据报的连接，即UDP ASSOCIATE；
+	ATYP代表请求的远程服务器地址类型，它是一个可变参数，但是它值的长度1个字节，
+	有三种类型：
+	    1>.数字“1”：表示是一个IPV4地址（IP V4 address）；
+	    2>.数字“3”：表示是一个域名（DOMAINNAME）；
+	    3>.数字“4”：表示是一个IPV6地址（IP V6 address）；
+
+*
+*/
 type Socks5Resolution struct {
 	VER       uint8
 	CMD       uint8
