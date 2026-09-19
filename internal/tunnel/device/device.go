@@ -18,6 +18,9 @@ type Device interface {
 	Close() error
 }
 
+// Reserve room for Linux's virtio header and macOS's address-family header.
+const packetOffset = 16
+
 type Native struct {
 	dev     tun.Device
 	name    string
@@ -79,9 +82,9 @@ func (d *Native) ReadPacket() ([]byte, error) {
 	bufs := make([][]byte, batchSize)
 	sizes := make([]int, batchSize)
 	for i := range bufs {
-		bufs[i] = make([]byte, 65535)
+		bufs[i] = make([]byte, packetOffset+65535)
 	}
-	n, err := d.dev.Read(bufs, sizes, 0)
+	n, err := d.dev.Read(bufs, sizes, packetOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -89,10 +92,10 @@ func (d *Native) ReadPacket() ([]byte, error) {
 		return nil, io.ErrNoProgress
 	}
 	for i := 0; i < n; i++ {
-		if sizes[i] <= 0 || sizes[i] > len(bufs[i]) {
+		if sizes[i] <= 0 || sizes[i] > len(bufs[i])-packetOffset {
 			continue
 		}
-		d.pending = append(d.pending, append([]byte(nil), bufs[i][:sizes[i]]...))
+		d.pending = append(d.pending, append([]byte(nil), bufs[i][packetOffset:packetOffset+sizes[i]]...))
 	}
 	if len(d.pending) == 0 {
 		return nil, errors.New("TUN returned no valid packets")
@@ -103,11 +106,15 @@ func (d *Native) ReadPacket() ([]byte, error) {
 }
 
 func (d *Native) WritePacket(packet []byte) error {
-	n, err := d.dev.Write([][]byte{packet}, 0)
+	buf := make([]byte, packetOffset+len(packet))
+	copy(buf[packetOffset:], packet)
+	n, err := d.dev.Write([][]byte{buf}, packetOffset)
 	if err != nil {
 		return err
 	}
-	if n != 1 {
+	// The pinned Linux backend returns bytes (including any virtio header),
+	// while macOS and Windows return the number of packets.
+	if (runtime.GOOS == "linux" && n < len(packet)) || (runtime.GOOS != "linux" && n != 1) {
 		return io.ErrShortWrite
 	}
 	return nil

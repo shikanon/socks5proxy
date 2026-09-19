@@ -161,6 +161,15 @@ assert response[:2] == b"\x12\x34"
 kill -TERM "$server_pid"
 wait "$server_pid" 2>/dev/null || true
 server_pid=""
+if [[ -e "$work_dir/server-state/server-network-state.json" ]]; then
+  echo "Server network state was not restored on shutdown." >&2
+  cat "$work_dir/server.log" >&2
+  exit 1
+fi
+if ip netns exec "$server_ns" iptables-save | grep -q socks5proxy-tunnel; then
+  echo "Server firewall rules were not restored on shutdown." >&2
+  exit 1
+fi
 sleep 1
 if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 \
   http://198.51.100.2:8080/ >/dev/null 2>&1; then

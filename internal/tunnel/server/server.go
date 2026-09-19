@@ -102,7 +102,6 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 		<-ctx.Done()
 		server.sessions.closeAll()
 		_ = listener.Close()
-		_ = tunDevice.Close()
 	}()
 	go server.downlink(ctx)
 
