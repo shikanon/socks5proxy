@@ -129,13 +129,14 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 				return err
 			}
 			networkManager, err = tunnelnet.NewClientManager(tunnelnet.ClientOptions{
-				TUNName:    tunDevice.Name(),
-				ClientIP:   clientIP,
-				ServerIP:   serverIP,
-				TunnelPeer: peerIP,
-				DNS:        dnsIP,
-				MTU:        response.MTU,
-				StateDir:   config.StateDir,
+				TUNName:      tunDevice.Name(),
+				ClientIP:     clientIP,
+				ServerIP:     serverIP,
+				TunnelPeer:   peerIP,
+				DNS:          dnsIP,
+				MTU:          response.MTU,
+				StateDir:     config.StateDir,
+				SkipLinuxDNS: config.SkipLinuxDNS,
 			}, nil)
 			if err != nil {
 				_ = conn.CloseWithError(5, "network setup failed")
@@ -247,6 +248,11 @@ func relay(
 				continue
 			}
 			if err := conn.SendDatagram(payload); err != nil {
+				var tooLarge *quic.DatagramTooLargeError
+				if errors.As(err, &tooLarge) {
+					stats.dropped.Add(1)
+					continue
+				}
 				errs <- err
 				return
 			}

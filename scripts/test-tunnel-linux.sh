@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]]; then
   exit 77
 fi
 
-for command in go ip iptables openssl python3 curl; do
+for command in go ip iptables openssl python3 curl ping sha256sum; do
   command -v "$command" >/dev/null || {
     echo "Missing required command: $command" >&2
     exit 77
@@ -71,13 +71,13 @@ ip link set s5pt0 netns "$target_ns"
 
 ip -n "$client_ns" link set lo up
 ip -n "$client_ns" addr add 192.0.2.2/24 dev s5pc0
-ip -n "$client_ns" link set s5pc0 up
+ip -n "$client_ns" link set s5pc0 mtu 1228 up
 ip -n "$client_ns" route add default via 192.0.2.1
 
 ip -n "$server_ns" link set lo up
 ip -n "$server_ns" addr add 192.0.2.1/24 dev s5ps0
 ip -n "$server_ns" addr add 198.51.100.1/24 dev s5ps1
-ip -n "$server_ns" link set s5ps0 up
+ip -n "$server_ns" link set s5ps0 mtu 1228 up
 ip -n "$server_ns" link set s5ps1 up
 
 ip -n "$target_ns" link set lo up
@@ -87,21 +87,28 @@ ip -n "$target_ns" route add default via 198.51.100.1
 
 ip netns exec "$server_ns" iptables -A FORWARD -i s5ps0 -o s5ps1 -j DROP
 
+python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256))*4096)' "$work_dir/payload.bin"
 ip netns exec "$target_ns" python3 -m http.server 8080 \
-  --bind 198.51.100.2 >"$work_dir/target.log" 2>&1 &
+  --directory "$work_dir" --bind 198.51.100.2 >"$work_dir/target.log" 2>&1 &
 target_pid="$!"
 ip netns exec "$target_ns" python3 -c '
-import socket
+import select, socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(("198.51.100.2", 53))
+echo = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+echo.setsockopt(socket.IPPROTO_IP, 10, 0)  # IP_MTU_DISCOVER=IP_PMTUDISC_DONT
+echo.bind(("198.51.100.2", 9000))
 while True:
-    query, peer = s.recvfrom(512)
-    response = query[:2] + b"\x81\x80" + query[4:6] + b"\x00\x00\x00\x00\x00\x00" + query[12:]
-    s.sendto(response, peer)
+    for ready in select.select([s, echo], [], [])[0]:
+        query, peer = ready.recvfrom(65535)
+        response = query
+        if ready is s:
+            response = query[:2] + b"\x81\x80" + query[4:6] + b"\x00\x00\x00\x00\x00\x00" + query[12:]
+        ready.sendto(response, peer)
 ' >"$work_dir/dns.log" 2>&1 &
 dns_pid="$!"
 
-if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 \
+if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
   http://198.51.100.2:8080/ >/dev/null 2>&1; then
   echo "Direct client traffic unexpectedly reached the target." >&2
   exit 1
@@ -115,6 +122,7 @@ ip netns exec "$server_ns" "$work_dir/server" \
   -token-file "$work_dir/clients.tokens" \
   -outbound-interface s5ps1 \
   -state-dir "$work_dir/server-state" \
+  -mtu 1280 \
   -obfs-allow none,simple,random >"$work_dir/server.log" 2>&1 &
 server_pid="$!"
 
@@ -127,13 +135,15 @@ ip netns exec "$client_ns" "$work_dir/client" \
   -client-id integration \
   -token-file "$work_dir/client.token" \
   -state-dir "$work_dir/client-state" \
+  -mtu 1280 \
+  -linux-dns=false \
   -dns 1.1.1.1 \
   -obfs random >"$work_dir/client.log" 2>&1 &
 client_pid="$!"
 
 connected="false"
 for _ in $(seq 1 20); do
-  if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 \
+  if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
     http://198.51.100.2:8080/ >/dev/null 2>&1; then
     connected="true"
     break
@@ -148,6 +158,12 @@ if [[ "$connected" != "true" ]]; then
   exit 1
 fi
 
+ip netns exec "$client_ns" curl -fsS --connect-timeout 2 --max-time 20 \
+  http://198.51.100.2:8080/payload.bin -o "$work_dir/received.bin"
+[[ "$(sha256sum "$work_dir/payload.bin" | cut -d' ' -f1)" == \
+   "$(sha256sum "$work_dir/received.bin" | cut -d' ' -f1)" ]]
+ip netns exec "$client_ns" ping -n -c 3 -W 2 -M do -s 1122 198.51.100.2
+
 ip netns exec "$client_ns" python3 -c '
 import socket
 query = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01"
@@ -156,6 +172,13 @@ s.settimeout(2)
 s.sendto(query, ("198.51.100.2", 53))
 response, _ = s.recvfrom(512)
 assert response[:2] == b"\x12\x34"
+s.setsockopt(socket.IPPROTO_IP, 10, 0)
+for size in (1, 512, 1122, 4096):
+    payload = bytes(i % 251 for i in range(size))
+    s.sendto(payload, ("198.51.100.2", 9000))
+    response, _ = s.recvfrom(65535)
+    assert response == payload, (size, len(response))
+    print("UDP echo bytes:", size)
 '
 
 kill -TERM "$server_pid"
@@ -171,7 +194,7 @@ if ip netns exec "$server_ns" iptables-save | grep -q socks5proxy-tunnel; then
   exit 1
 fi
 sleep 1
-if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 \
+if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
   http://198.51.100.2:8080/ >/dev/null 2>&1; then
   echo "Client traffic leaked after the tunnel server stopped." >&2
   exit 1

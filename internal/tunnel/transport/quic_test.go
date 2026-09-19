@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -17,7 +18,55 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/shikanon/socks5proxy/internal/tunnel"
 )
+
+func TestMinimumPathCarriesFullTunnelMTU(t *testing.T) {
+	certFile, keyFile, caFile := writeTestCertificates(t)
+	serverTLS, err := ServerTLS(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := QUICConfig()
+	if config.InitialPacketSize != 1200 {
+		t.Fatal("initial packets must fit the minimum QUIC path")
+	}
+	config.DisablePathMTUDiscovery = true
+	listener, err := quic.ListenAddr("127.0.0.1:0", serverTLS, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	clientTLS, err := ClientTLS(caFile, "localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := quic.DialAddr(ctx, listener.Addr().String(), clientTLS, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseWithError(0, "test complete")
+	server, err := listener.Accept(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.CloseWithError(0, "test complete")
+	payload := bytes.Repeat([]byte{0xa5}, tunnel.DefaultMTU+2)
+	for _, pair := range [][2]*quic.Conn{{client, server}, {server, client}} {
+		if err := pair[0].SendDatagram(payload); err != nil {
+			t.Fatalf("full-MTU send on minimum QUIC path: %v", err)
+		}
+		got, err := pair[1].ReceiveDatagram(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, payload) {
+			t.Fatal("full-MTU payload changed in transit")
+		}
+	}
+}
 
 func TestQUICHandshakeUsesTLS13AndDatagrams(t *testing.T) {
 	certFile, keyFile, caFile := writeTestCertificates(t)

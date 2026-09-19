@@ -15,13 +15,14 @@ import (
 )
 
 type ClientOptions struct {
-	TUNName    string
-	ClientIP   netip.Addr
-	ServerIP   netip.Addr
-	TunnelPeer netip.Addr
-	DNS        netip.Addr
-	MTU        int
-	StateDir   string
+	TUNName      string
+	ClientIP     netip.Addr
+	ServerIP     netip.Addr
+	TunnelPeer   netip.Addr
+	DNS          netip.Addr
+	MTU          int
+	StateDir     string
+	SkipLinuxDNS bool
 }
 
 type ClientManager struct {
@@ -237,6 +238,29 @@ func (m *ClientManager) planLinux(ctx context.Context) ([]Command, []Command, er
 	if gateway == "" || !safeInterfaceName(physical) {
 		return nil, nil, errors.New("could not determine the Linux default route")
 	}
+	if !m.options.SkipLinuxDNS {
+		if _, err := m.runner.Run(ctx, "resolvectl", "status"); err != nil {
+			return nil, nil, fmt.Errorf("Linux tunnel DNS requires systemd-resolved; use -linux-dns=false only with externally managed tunnel DNS: %w", err)
+		}
+		resolvConf, err := m.runner.Run(ctx, "cat", "/etc/resolv.conf")
+		if err != nil {
+			return nil, nil, err
+		}
+		stub := false
+		for _, line := range strings.Split(resolvConf, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[0] != "nameserver" {
+				continue
+			}
+			if fields[1] != "127.0.0.53" && fields[1] != "127.0.0.54" {
+				return nil, nil, errors.New("Linux tunnel DNS requires /etc/resolv.conf to use only the systemd-resolved stub; use -linux-dns=false only with externally managed tunnel DNS")
+			}
+			stub = true
+		}
+		if !stub {
+			return nil, nil, errors.New("no systemd-resolved stub nameserver in /etc/resolv.conf")
+		}
+	}
 	forward := []Command{
 		{Name: "ip", Args: []string{"addr", "add", m.options.ClientIP.String() + "/32", "peer", m.options.TunnelPeer.String(), "dev", m.options.TUNName}},
 		{Name: "ip", Args: []string{"link", "set", "dev", m.options.TUNName, "mtu", strconv.Itoa(m.options.MTU), "up"}},
@@ -250,6 +274,21 @@ func (m *ClientManager) planLinux(ctx context.Context) ([]Command, []Command, er
 		{Name: "ip", Args: []string{"route", "del", m.options.ServerIP.String() + "/32"}},
 		{Name: "ip", Args: []string{"route", "del", "0.0.0.0/1"}},
 		{Name: "ip", Args: []string{"route", "del", "128.0.0.0/1"}},
+	}
+	if !m.options.SkipLinuxDNS {
+		// The TUN may already be gone after a crash. Never revert the physical
+		// interface; resolved automatically removes settings for deleted links.
+		restoreDNS := Command{Name: "sh", Args: []string{"-c",
+			`if [ -e "/sys/class/net/$1" ]; then resolvectl revert "$1" || exit; fi; resolvectl flush-caches`,
+			"socks5proxy-dns-restore", m.options.TUNName}}
+		forward = append(forward,
+			Command{Name: "resolvectl", Args: []string{"dns", m.options.TUNName, m.options.DNS.String()}},
+			Command{Name: "resolvectl", Args: []string{"domain", m.options.TUNName, "~."}},
+			Command{Name: "resolvectl", Args: []string{"flush-caches"}},
+		)
+		undo = append(undo, restoreDNS, restoreDNS,
+			Command{Name: "resolvectl", Args: []string{"flush-caches"}},
+		)
 	}
 	return forward, undo, nil
 }

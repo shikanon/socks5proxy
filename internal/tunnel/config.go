@@ -10,22 +10,26 @@ import (
 )
 
 const (
-	DefaultMTU        = 1280
+	// Leave room in QUIC's minimum 1200-byte UDP payload for a short header,
+	// a 20-byte connection ID, packet number, AEAD tag, DATAGRAM frame and
+	// our two-byte packet length. Do not depend on path MTU discovery.
+	DefaultMTU        = 1150
 	DefaultTunnelCIDR = "10.255.0.0/24"
 	DefaultDNS        = "1.1.1.1"
 )
 
 type ClientConfig struct {
-	ServerAddr string
-	ClientID   string
-	TokenFile  string
-	CAFile     string
-	ServerName string
-	DNS        string
-	MTU        int
-	StateDir   string
-	Obfs       string
-	TUNName    string
+	ServerAddr   string
+	ClientID     string
+	TokenFile    string
+	CAFile       string
+	ServerName   string
+	DNS          string
+	MTU          int
+	StateDir     string
+	Obfs         string
+	TUNName      string
+	SkipLinuxDNS bool
 }
 
 type ServerConfig struct {

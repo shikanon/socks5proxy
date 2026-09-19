@@ -66,6 +66,7 @@ func QUICConfig() *quic.Config {
 		KeepAlivePeriod:       keepAlivePeriod,
 		Allow0RTT:             false,
 		EnableDatagrams:       true,
+		InitialPacketSize:     1200,
 		MaxIncomingStreams:    1,
 		MaxIncomingUniStreams: -1,
 	}

@@ -1,16 +1,16 @@
 # 全局加密隧道
 
-全局隧道通过 macOS `utun` 或 Windows Wintun 接管默认 IPv4 流量，使用 QUIC + TLS 1.3 传输到 Linux 服务端。服务端解密后将 IP 包写入 TUN，并通过 Linux 转发和 NAT 访问目标网络。
+全局隧道通过 Linux TUN、macOS `utun` 或 Windows Wintun 接管默认 IPv4 流量，使用 QUIC + TLS 1.3 传输到 Linux 服务端。服务端解密后将 IP 包写入 TUN，并通过 Linux 转发和 NAT 访问目标网络。
 
 `simple` / `random` 可以作为 TLS 内层的可选流量混淆，但不会替代 TLS。默认使用 `-obfs none`。
 
 ## 前置条件
 
 - 服务端：Linux、root 或 `CAP_NET_ADMIN`、可用的 `ip`、`iptables` 和 `sysctl`。
-- 客户端：macOS 或 Windows 管理员权限。
+- 客户端：Linux root、macOS 或 Windows 管理员权限。Linux 需要 `ip`、运行中的 `systemd-resolved`、`resolvectl`，以及使用 resolved stub（127.0.0.53/54）的 `/etc/resolv.conf`。
 - 网络：客户端能够访问服务端监听的 UDP 端口。
 - Windows：`wintun.dll` 必须与客户端 EXE 位于同一目录。Release 中的 Windows ZIP 已包含它。
-- 当前隧道仅承载 IPv4；运行期间会阻断公网和 ULA IPv6，避免绕过隧道。
+- 当前隧道仅承载 IPv4；macOS/Windows 运行期间会阻断公网和 ULA IPv6。Linux 尚未自动阻断 IPv6，需要在宿主网络中另行禁用或限制 IPv6。
 
 ## 准备 TLS 证书
 
@@ -98,6 +98,15 @@ sudo ./socks5proxy_client_darwin_arm64 \
 
 Intel Mac 使用 `socks5proxy_client_darwin_amd64`。
 
+## 启动 Linux 客户端
+
+使用与 macOS 相同的参数运行 `socks5proxy_client_linux_amd64`。
+客户端在 TUN 上设置服务端下发的 DNS 和 `~.` 路由域，并清空旧缓存；正常停止时撤销 TUN DNS 并再次清空缓存，物理网卡 DNS 保持原设置。
+`-dns` 可覆盖服务端下发的 IPv4 DNS。
+
+不使用 systemd-resolved 的环境需要自行配置隧道 DNS，再使用 `-linux-dns=false`。
+网络 namespace 集成测试也必须使用此参数，避免 namespace 中的 `resolvectl` 通过共享 D-Bus 修改宿主 DNS。
+
 ## 启动 Windows 客户端
 
 在管理员 PowerShell 中运行：
@@ -155,4 +164,5 @@ QUIC/TLS 1.3 -> simple/random 还原（可选）-> IP 包
 - `authentication failed`：检查客户端 ID、令牌原文和服务端摘要是否匹配。
 - `create TUN device` 失败：确认管理员权限；Windows 确认 `wintun.dll` 与架构匹配。
 - 无法访问互联网：确认服务端 UDP 端口、防火墙 FORWARD、NAT 和出口网卡名称。
-- 部分大包失败：将两端 `-mtu` 同时降低，例如 `-mtu 1200`。
+- 默认 MTU 为 1150。服务端会将更大的 `-mtu`（包括旧配置的 1280）限制为 1150，并把实际值下发给客户端。这为 QUIC 最小 1200 字节 UDP 载荷预留封装开销，不依赖路径 MTU 探测成功。IPv4 大 UDP 包由内核分片/重组；TCP 按实际 TUN MTU 分段。
+- Linux DNS 配置失败：检查 `resolvectl status` 及 `/etc/resolv.conf`；启用后应能看到 TUN 的 DNS 和 `~.` 路由域。

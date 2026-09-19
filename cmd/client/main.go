@@ -24,6 +24,7 @@ func main() {
 	caFile := flag.String("ca", "", "Path to tunnel server CA certificate (default: system roots)")
 	serverName := flag.String("server-name", "", "TLS server name (default: server host)")
 	dns := flag.String("dns", "", "Tunnel DNS IPv4 address (default: server-provided)")
+	linuxDNS := flag.Bool("linux-dns", true, "Manage Linux DNS with systemd-resolved (disable only with externally managed tunnel DNS)")
 	mtu := flag.Int("mtu", tunnel.DefaultMTU, "Tunnel MTU (576-1400)")
 	stateDir := flag.String("state-dir", "", "Directory for recoverable network state")
 	obfs := flag.String("obfs", "none", "TLS-inner tunnel obfuscation: none, simple, or random")
@@ -45,16 +46,17 @@ func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		if err := tunnelclient.Run(ctx, tunnel.ClientConfig{
-			ServerAddr: *serverAddr,
-			ClientID:   *clientID,
-			TokenFile:  *tokenFile,
-			CAFile:     *caFile,
-			ServerName: *serverName,
-			DNS:        *dns,
-			MTU:        *mtu,
-			StateDir:   *stateDir,
-			Obfs:       *obfs,
-			TUNName:    *tunName,
+			ServerAddr:   *serverAddr,
+			ClientID:     *clientID,
+			TokenFile:    *tokenFile,
+			CAFile:       *caFile,
+			ServerName:   *serverName,
+			DNS:          *dns,
+			MTU:          *mtu,
+			StateDir:     *stateDir,
+			Obfs:         *obfs,
+			TUNName:      *tunName,
+			SkipLinuxDNS: !*linuxDNS,
 		}); err != nil {
 			log.Fatal(err)
 		}

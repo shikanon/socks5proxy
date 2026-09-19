@@ -40,6 +40,10 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
+	if config.MTU > tunnel.DefaultMTU {
+		log.Printf("limiting tunnel MTU from %d to %d for QUIC datagram capacity", config.MTU, tunnel.DefaultMTU)
+		config.MTU = tunnel.DefaultMTU
+	}
 	tokens, err := LoadTokenStore(config.TokenFile)
 	if err != nil {
 		return err
@@ -221,6 +225,11 @@ func (s *Server) sendLoop(ctx context.Context, current *session) {
 			return
 		case payload := <-current.send:
 			if err := current.conn.SendDatagram(payload); err != nil {
+				var tooLarge *quic.DatagramTooLargeError
+				if errors.As(err, &tooLarge) {
+					current.dropped.Add(1)
+					continue
+				}
 				_ = current.conn.CloseWithError(3, "datagram send failed")
 				return
 			}
