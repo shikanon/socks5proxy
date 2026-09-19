@@ -19,6 +19,7 @@ const (
 )
 
 type ClientConfig struct {
+	Transport    string
 	ServerAddr   string
 	ClientID     string
 	TokenFile    string
@@ -33,6 +34,7 @@ type ClientConfig struct {
 }
 
 type ServerConfig struct {
+	Transport         string
 	ListenAddr        string
 	CertFile          string
 	KeyFile           string
@@ -45,6 +47,19 @@ type ServerConfig struct {
 	ObfsAllow         map[string]bool
 	TUNName           string
 	StateDir          string
+}
+
+func NormalizeTransport(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = "quic"
+	}
+	switch mode {
+	case "quic", "tcp", "tcp-plain":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("unsupported tunnel transport %q", mode)
+	}
 }
 
 func NormalizeObfs(mode string) (string, error) {
@@ -76,6 +91,9 @@ func ParseObfsAllow(value string) (map[string]bool, error) {
 }
 
 func (c *ClientConfig) SetDefaults() {
+	if mode, err := NormalizeTransport(c.Transport); err == nil {
+		c.Transport = mode
+	}
 	if c.MTU == 0 {
 		c.MTU = DefaultMTU
 	}
@@ -95,6 +113,9 @@ func (c *ClientConfig) SetDefaults() {
 }
 
 func (c ClientConfig) Validate() error {
+	if _, err := NormalizeTransport(c.Transport); err != nil {
+		return err
+	}
 	if c.ServerAddr == "" {
 		return errors.New("tunnel server address is required")
 	}
@@ -122,6 +143,11 @@ func (c ClientConfig) Validate() error {
 }
 
 func (c *ServerConfig) SetDefaults() error {
+	mode, err := NormalizeTransport(c.Transport)
+	if err != nil {
+		return err
+	}
+	c.Transport = mode
 	if c.MTU == 0 {
 		c.MTU = DefaultMTU
 	}
@@ -145,13 +171,17 @@ func (c *ServerConfig) SetDefaults() error {
 }
 
 func (c ServerConfig) Validate() error {
+	mode, err := NormalizeTransport(c.Transport)
+	if err != nil {
+		return err
+	}
 	if c.ListenAddr == "" {
 		return errors.New("tunnel listen address is required")
 	}
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		return fmt.Errorf("invalid tunnel listen address: %w", err)
 	}
-	if c.CertFile == "" || c.KeyFile == "" {
+	if mode != "tcp-plain" && (c.CertFile == "" || c.KeyFile == "") {
 		return errors.New("TLS certificate and key files are required")
 	}
 	if c.TokenFile == "" {

@@ -14,6 +14,7 @@ import (
 
 func main() {
 	mode := flag.String("mode", "proxy", "Run mode: proxy or tunnel")
+	transportMode := flag.String("transport", "quic", "Tunnel transport: quic, tcp (TLS), or tcp-plain (unencrypted)")
 	listenAddr := flag.String("local", ":8888", "Input server listen address(Default 8888):")
 	serverAddr := flag.String("server", "", "Input server listen address:")
 	passwd := flag.String("passwd", "", "Input server proxy password:")
@@ -27,7 +28,7 @@ func main() {
 	linuxDNS := flag.Bool("linux-dns", true, "Manage Linux DNS with systemd-resolved (disable only with externally managed tunnel DNS)")
 	mtu := flag.Int("mtu", tunnel.DefaultMTU, "Tunnel MTU (576-1400)")
 	stateDir := flag.String("state-dir", "", "Directory for recoverable network state")
-	obfs := flag.String("obfs", "none", "TLS-inner tunnel obfuscation: none, simple, or random")
+	obfs := flag.String("obfs", "none", "Tunnel obfuscation (not encryption): none, simple, or random")
 	tunName := flag.String("tun-name", "", "Tunnel interface name")
 	flag.Parse()
 	if *serverAddr == "" {
@@ -46,6 +47,7 @@ func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		if err := tunnelclient.Run(ctx, tunnel.ClientConfig{
+			Transport:    *transportMode,
 			ServerAddr:   *serverAddr,
 			ClientID:     *clientID,
 			TokenFile:    *tokenFile,

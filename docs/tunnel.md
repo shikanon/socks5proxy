@@ -1,14 +1,22 @@
 # 全局加密隧道
 
-全局隧道通过 Linux TUN、macOS `utun` 或 Windows Wintun 接管默认 IPv4 流量，使用 QUIC + TLS 1.3 传输到 Linux 服务端。服务端解密后将 IP 包写入 TUN，并通过 Linux 转发和 NAT 访问目标网络。
+全局隧道通过 Linux TUN、macOS `utun` 或 Windows Wintun 接管默认 IPv4 流量，传输到 Linux 服务端，再通过 Linux 转发和 NAT 访问目标网络。TCP、UDP、ICMP 和 DNS 都通过同一个 IP 隧道承载。
 
-`simple` / `random` 可以作为 TLS 内层的可选流量混淆，但不会替代 TLS。默认使用 `-obfs none`。
+默认保持 QUIC + TLS 1.3。`simple` / `random` 仅是可选流量混淆，不提供加密安全性；默认 `-obfs none`。
+
+| 两端 `-transport` 参数 | 外层传输 | 安全性 |
+| --- | --- | --- |
+| `quic`（默认） | UDP / QUIC DATAGRAM | TLS 1.3 |
+| `tcp` | TCP 长连接，按长度封装 IP 包 | TLS 1.3，严格验证证书和 ALPN |
+| `tcp-plain` | 同样的 TCP 长连接及封包 | 显式无加密、无数据完整性 |
+
+UDP 线路丢包严重时可尝试 `tcp`。关闭 TLS 是否更快需要同条件重复测量；对网络受限的传输，TLS 开销通常不是主要瓶颈。TCP 外层丢包会暂停其后所有 IP 包，并可能与内层 TCP 重传叠加，因此也不保证适合所有线路。
 
 ## 前置条件
 
 - 服务端：Linux、root 或 `CAP_NET_ADMIN`、可用的 `ip`、`iptables` 和 `sysctl`。
 - 客户端：Linux root、macOS 或 Windows 管理员权限。Linux 需要 `ip`、运行中的 `systemd-resolved`、`resolvectl`，以及使用 resolved stub（127.0.0.53/54）的 `/etc/resolv.conf`。
-- 网络：客户端能够访问服务端监听的 UDP 端口。
+- 网络：`quic` 需要服务端 UDP 端口；`tcp` / `tcp-plain` 需要 TCP 端口。两端必须选择相同后端。
 - Windows：`wintun.dll` 必须与客户端 EXE 位于同一目录。Release 中的 Windows ZIP 已包含它。
 - 当前隧道仅承载 IPv4；macOS/Windows 运行期间会阻断公网和 ULA IPv6。Linux 尚未自动阻断 IPv6，需要在宿主网络中另行禁用或限制 IPv6。
 
@@ -34,6 +42,7 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key \
 ```
 
 客户端的 `-server-name` 必须匹配证书中的 DNS 名称或 IP SAN。不要分发 `ca.key` 或 `server.key`。
+`tcp-plain` 不加载证书；`tcp` 始终使用 TLS，不会因缺少证书或握手失败而改用明文。
 
 ## 准备客户端令牌
 
@@ -50,6 +59,8 @@ chmod 600 clients.tokens
 
 客户端保存令牌原文，服务端只保存 SHA-256 摘要。不要在命令行直接传递令牌。
 计算摘要时必须排除令牌文件末尾的换行；直接对 `desktop.token` 文件运行 `sha256sum` 会把换行计入摘要，导致认证失败。
+
+两个 TCP 后端共用三步认证：服务端 32 字节随机挑战，客户端随机 nonce 和 HMAC-SHA256 证明，服务端签名认证响应。证明绑定混淆模式和下发的 IP、DNS、MTU、会话参数，拒绝旧挑战重放。线路上不会直接发送长期令牌或其摘要。服务端摘要是 TCP 认证的等价凭据，必须像令牌一样保护。
 
 ## 启动 Linux 服务端
 
@@ -134,16 +145,28 @@ Intel Mac 使用 `socks5proxy_client_darwin_amd64`。
 -obfs random
 ```
 
-服务端通过 `-obfs-allow` 设置允许列表。模式在 TLS 加密的认证控制流中协商；不匹配时连接失败，不会静默降级。
+服务端通过 `-obfs-allow` 设置允许列表。`quic` / `tcp` 在 TLS 控制流中协商，TCP 认证证明也绑定模式；不匹配时连接失败，不会静默降级。
 
 数据路径为：
 
 ```text
-IP 包 -> simple/random（可选）-> QUIC/TLS 1.3
-QUIC/TLS 1.3 -> simple/random 还原（可选）-> IP 包
+IP 包 -> simple/random（可选）-> QUIC DATAGRAM 或 TCP 长度封包
+QUIC DATAGRAM 或 TCP 长度封包 -> simple/random 还原（可选）-> IP 包
 ```
 
-`simple` / `random` 不提供完整性、可靠身份认证或重放防护，隧道安全性始终来自 TLS 1.3。
+`quic` 和 `tcp` 的数据安全性来自 TLS 1.3。TCP 混淆使用令牌摘要的十六进制表示作为输入；QUIC 保留旧版混淆协议兼容性。
+
+## 使用 TCP 后端
+
+将上述服务端和客户端命令都添加 `-transport tcp`，并设置可用 TCP 端口，例如 `-local :1443` / `-server vpn.example.com:1443`。其他令牌、证书、TUN、DNS、NAT 参数保持相同。`-obfs random` 可同时用于三个后端。
+
+测试无 TLS 性能时，在两端显式选择 `-transport tcp-plain`，并使用独立的随机测试令牌及服务端摘要文件。此模式不需要 `-cert` / `-key` / `-ca` / `-server-name`。启动日志会提示无加密；随机混淆不阻止监听、数据篡改或主动中继，认证证明也不为后续 IP 包提供完整性。
+
+TCP 控制认证总预算为 10 秒，完成后转入双向 IP 封包模式。2 字节网络序长度后接完整数据报，最大 1402 字节；零长度为内部心跳，不会写入 TUN。每 15 秒发送心跳，接收空闲 45 秒、单次写入 10 秒超时后关闭连接并重连。旧转发线程结束后才启用新连接，停止时沿用原网络恢复流程。
+
+QUIC 和 TCP 可由不同进程同时监听，但每个实例需要独立的端口、`-tun-name`、`-tunnel-cidr` 和 `-state-dir`。多个实例共用宿主网络时，应由统一的网络管理配置转发/NAT（实例使用 `-manage-network=false`），避免各自恢复全局 `ip_forward` 状态。
+
+传统 `-mode proxy -recv socks5 -type random` 仅代理应用流量，可作为性能对照。它不接管系统 IP，也不能代替全局隧道的 UDP/ICMP 承载。
 
 ## 停止与恢复
 
@@ -163,6 +186,6 @@ QUIC/TLS 1.3 -> simple/random 还原（可选）-> IP 包
 - TLS 名称错误：检查 `-server-name` 是否存在于证书 SAN。
 - `authentication failed`：检查客户端 ID、令牌原文和服务端摘要是否匹配。
 - `create TUN device` 失败：确认管理员权限；Windows 确认 `wintun.dll` 与架构匹配。
-- 无法访问互联网：确认服务端 UDP 端口、防火墙 FORWARD、NAT 和出口网卡名称。
-- 默认 MTU 为 1150。服务端会将更大的 `-mtu`（包括旧配置的 1280）限制为 1150，并把实际值下发给客户端。这为 QUIC 最小 1200 字节 UDP 载荷预留封装开销，不依赖路径 MTU 探测成功。IPv4 大 UDP 包由内核分片/重组；TCP 按实际 TUN MTU 分段。
+- 无法访问互联网：确认所选后端对应的 UDP/TCP 端口、防火墙 FORWARD、NAT 和出口网卡名称。
+- 默认 MTU 为 1150。QUIC 服务端会将更大的 `-mtu`（包括旧配置的 1280）限制为 1150，并把实际值下发给客户端，为最小 1200 字节 QUIC UDP 载荷预留封装开销。TCP 后端允许 576–1400；比较后端性能时使用相同 MTU。IPv4 大 UDP 包由内核分片/重组，内层 TCP 按实际 TUN MTU 分段。
 - Linux DNS 配置失败：检查 `resolvectl status` 及 `/etc/resolv.conf`；启用后应能看到 TUN 的 DNS 和 `~.` 路由域。

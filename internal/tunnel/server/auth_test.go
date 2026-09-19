@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/shikanon/socks5proxy/internal/tunnel/protocol"
 )
 
 func TestTokenStoreAuthentication(t *testing.T) {
@@ -40,5 +42,33 @@ func TestTokenStoreRejectsDuplicateClient(t *testing.T) {
 	}
 	if _, err := LoadTokenStore(path); err == nil {
 		t.Fatal("expected duplicate client error")
+	}
+}
+
+func TestTokenStoreChallengeAuthentication(t *testing.T) {
+	key := sha256.Sum256([]byte("0123456789abcdef0123456789abcdef"))
+	store := &TokenStore{hashes: map[string][sha256.Size]byte{"desktop": key}}
+	challenge, _ := protocol.NewNonce()
+	nonce, _ := protocol.NewNonce()
+	for _, name := range []string{"valid", "unknown", "wrong_token", "plaintext_token", "wrong_type"} {
+		t.Run(name, func(t *testing.T) {
+			request := protocol.Message{Type: protocol.TypeAuthRequest, Version: protocol.Version, ClientID: "desktop", Nonce: nonce, Obfs: "random"}
+			proofKey := key
+			switch name {
+			case "unknown":
+				request.ClientID = "unknown"
+			case "wrong_token":
+				proofKey = sha256.Sum256([]byte("wrong"))
+			case "plaintext_token":
+				request.Token = "credential-must-not-be-transmitted"
+			case "wrong_type":
+				request.Type = protocol.TypeAuthResponse
+			}
+			request.Proof = protocol.AuthProof(proofKey, protocol.ClientProofRole, challenge, nonce, request)
+			got, valid := store.AuthenticateProof(challenge, request)
+			if valid != (name == "valid") || (valid && got != key) {
+				t.Fatal("unexpected proof authentication result")
+			}
+		})
 	}
 }

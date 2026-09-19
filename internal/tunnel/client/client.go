@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -54,9 +57,14 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 	}
 	_, serverPort, _ := net.SplitHostPort(config.ServerAddr)
 	dialAddr := net.JoinHostPort(serverIP.String(), serverPort)
-	tlsConfig, err := transport.ClientTLS(config.CAFile, serverName)
-	if err != nil {
-		return err
+	var tlsConfig *tls.Config
+	if config.Transport != "tcp-plain" {
+		tlsConfig, err = transport.ClientTLS(config.CAFile, serverName)
+		if err != nil {
+			return err
+		}
+	} else {
+		log.Print("WARNING: tcp-plain has no packet encryption or integrity; obfuscation is not security")
 	}
 
 	var (
@@ -85,7 +93,7 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		conn, response, cipher, err := connect(ctx, dialAddr, config.ClientID, token, obfs, tlsConfig)
+		conn, response, cipher, err := connect(ctx, dialAddr, config.ClientID, token, obfs, tlsConfig, config.Transport)
 		if err != nil {
 			if !networkApplied {
 				return err
@@ -154,7 +162,7 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 			activeResponse = response
 			outbound = make(chan []byte, 256)
 			go readTUN(ctx, tunDevice, outbound, &stats)
-			log.Printf("global tunnel enabled interface=%s client_ip=%s server_ip=%s obfs=%s", tunDevice.Name(), clientIP, serverIP, obfs)
+			log.Printf("global tunnel enabled interface=%s client_ip=%s server_ip=%s transport=%s obfs=%s", tunDevice.Name(), clientIP, serverIP, config.Transport, obfs)
 		} else if !sameTunnelParameters(activeResponse, response) {
 			_ = conn.CloseWithError(6, "tunnel parameters changed")
 			return errors.New("server changed tunnel parameters; network configuration was restored, restart the client")
@@ -177,43 +185,81 @@ func connect(
 	ctx context.Context,
 	serverAddr, clientID, token, obfs string,
 	tlsConfig *tls.Config,
-) (*quic.Conn, protocol.Message, protocol.Cipher, error) {
-	conn, err := transport.Dial(ctx, serverAddr, tlsConfig)
+	kind string,
+) (result transport.Conn, response protocol.Message, cipher protocol.Cipher, err error) {
+	authCtx, authCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer authCancel()
+	conn, err := transport.DialTunnel(authCtx, serverAddr, tlsConfig, kind)
 	if err != nil {
 		return nil, protocol.Message{}, nil, err
 	}
-	stream, err := conn.OpenStreamSync(ctx)
+	stop := context.AfterFunc(authCtx, func() { _ = conn.CloseWithError(1, "authentication canceled") })
+	defer func() {
+		stopped := stop()
+		if err != nil || !stopped || authCtx.Err() != nil {
+			_ = conn.CloseWithError(1, "authentication failed")
+			if err == nil {
+				result, err = nil, authCtx.Err()
+			}
+		}
+	}()
+	stream, err := conn.OpenControl(authCtx)
 	if err != nil {
-		_ = conn.CloseWithError(1, "control stream failed")
 		return nil, protocol.Message{}, nil, err
 	}
-	if err := protocol.WriteMessage(stream, protocol.Message{
+	deadline, _ := authCtx.Deadline()
+	if err := stream.SetDeadline(deadline); err != nil {
+		return nil, protocol.Message{}, nil, err
+	}
+	request := protocol.Message{
 		Type:     protocol.TypeAuthRequest,
 		Version:  protocol.Version,
 		ClientID: clientID,
 		Token:    token,
 		Obfs:     obfs,
-	}); err != nil {
-		_ = conn.CloseWithError(1, "authentication write failed")
+	}
+	challenge := ""
+	key := sha256.Sum256([]byte(token))
+	obfsKey := token
+	isTCP := kind == "tcp" || kind == "tcp-plain"
+	if isTCP {
+		msg, err := protocol.ReadMessage(stream)
+		if err != nil {
+			return nil, protocol.Message{}, nil, err
+		}
+		if msg.Type != protocol.TypeAuthChallenge || !protocol.ValidNonce(msg.Nonce) {
+			return nil, protocol.Message{}, nil, errors.New("invalid authentication challenge")
+		}
+		challenge = msg.Nonce
+		request.Token = ""
+		request.Nonce, err = protocol.NewNonce()
+		if err != nil {
+			return nil, protocol.Message{}, nil, err
+		}
+		request.Proof = protocol.AuthProof(key, protocol.ClientProofRole, challenge, request.Nonce, request)
+		obfsKey = hex.EncodeToString(key[:])
+	}
+	if err := protocol.WriteMessage(stream, request); err != nil {
 		return nil, protocol.Message{}, nil, err
 	}
-	response, err := protocol.ReadMessage(stream)
+	response, err = protocol.ReadMessage(stream)
 	if err != nil {
-		_ = conn.CloseWithError(1, "authentication read failed")
 		return nil, protocol.Message{}, nil, err
 	}
-	_ = stream.Close()
 	if response.Type == protocol.TypeError {
-		_ = conn.CloseWithError(1, "authentication failed")
 		return nil, protocol.Message{}, nil, errors.New(response.Error)
 	}
 	if response.Type != protocol.TypeAuthResponse || response.Obfs != obfs {
-		_ = conn.CloseWithError(1, "invalid authentication response")
 		return nil, protocol.Message{}, nil, errors.New("server returned invalid authentication response")
 	}
-	cipher, err := tunnel.NewObfuscator(obfs, token)
+	if isTCP && !protocol.VerifyAuthProof(key, protocol.ServerProofRole, challenge, request.Nonce, response) {
+		return nil, protocol.Message{}, nil, errors.New("invalid server authentication proof")
+	}
+	cipher, err = tunnel.NewObfuscator(obfs, obfsKey)
 	if err != nil {
-		_ = conn.CloseWithError(1, "obfuscator failed")
+		return nil, protocol.Message{}, nil, err
+	}
+	if err := stream.Close(); err != nil {
 		return nil, protocol.Message{}, nil, err
 	}
 	return conn, response, cipher, nil
@@ -221,7 +267,7 @@ func connect(
 
 func relay(
 	ctx context.Context,
-	conn *quic.Conn,
+	conn transport.Conn,
 	tunDevice device.Device,
 	outbound <-chan []byte,
 	response protocol.Message,
@@ -231,16 +277,26 @@ func relay(
 	clientIP := netip.MustParseAddr(response.ClientIPv4)
 	mtu := response.MTU
 	childCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	var workers sync.WaitGroup
+	defer func() {
+		cancel()
+		_ = conn.CloseWithError(0, "relay stopped")
+		workers.Wait()
+	}()
 
 	errs := make(chan error, 2)
+	workers.Add(2)
 	go func() {
+		defer workers.Done()
 		for {
 			var packet []byte
 			select {
 			case <-childCtx.Done():
 				return
 			case packet = <-outbound:
+			}
+			if childCtx.Err() != nil {
+				return
 			}
 			payload, info, err := protocol.EncodeDatagram(packet, mtu, cipher)
 			if err != nil || info.Source != clientIP {
@@ -260,6 +316,7 @@ func relay(
 		}
 	}()
 	go func() {
+		defer workers.Done()
 		for {
 			payload, err := conn.ReceiveDatagram(childCtx)
 			if err != nil {

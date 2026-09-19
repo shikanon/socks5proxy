@@ -13,9 +13,10 @@ const (
 	ALPN           = "socks5proxy-tunnel/1"
 	MaxControlSize = 64 * 1024
 
-	TypeAuthRequest  = "auth_request"
-	TypeAuthResponse = "auth_response"
-	TypeError        = "error"
+	TypeAuthRequest   = "auth_request"
+	TypeAuthResponse  = "auth_response"
+	TypeAuthChallenge = "auth_challenge"
+	TypeError         = "error"
 )
 
 type Message struct {
@@ -23,6 +24,8 @@ type Message struct {
 	Version    int    `json:"version"`
 	ClientID   string `json:"client_id,omitempty"`
 	Token      string `json:"token,omitempty"`
+	Nonce      string `json:"nonce,omitempty"`
+	Proof      string `json:"proof,omitempty"`
 	Obfs       string `json:"obfs,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	ClientIPv4 string `json:"client_ipv4,omitempty"`
@@ -69,7 +72,7 @@ func ReadMessage(r io.Reader) (Message, error) {
 		return Message{}, fmt.Errorf("unsupported tunnel protocol version %d", msg.Version)
 	}
 	switch msg.Type {
-	case TypeAuthRequest, TypeAuthResponse, TypeError:
+	case TypeAuthRequest, TypeAuthResponse, TypeAuthChallenge, TypeError:
 	default:
 		return Message{}, fmt.Errorf("unsupported control message type %q", msg.Type)
 	}

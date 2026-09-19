@@ -9,7 +9,7 @@ func TestClientConfigDefaultsAndValidation(t *testing.T) {
 		TokenFile:  "/tmp/token",
 	}
 	config.SetDefaults()
-	if config.MTU != DefaultMTU || config.Obfs != "none" {
+	if config.MTU != DefaultMTU || config.Obfs != "none" || config.Transport != "quic" {
 		t.Fatalf("unexpected defaults: %#v", config)
 	}
 	if config.DNS != "" {
@@ -17,6 +17,44 @@ func TestClientConfigDefaultsAndValidation(t *testing.T) {
 	}
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTransportConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{
+		{"", "quic"}, {"quic", "quic"}, {" TCP ", "tcp"}, {"tcp-plain", "tcp-plain"}, {"udp", ""},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := NormalizeTransport(tc.input)
+			if got != tc.want || (err != nil) != (tc.want == "") {
+				t.Fatal("unexpected normalization", got, err)
+			}
+			client := ClientConfig{Transport: tc.input, ServerAddr: "localhost:443", ClientID: "test", TokenFile: "token"}
+			client.SetDefaults()
+			if (client.Validate() != nil) != (tc.want == "") {
+				t.Fatal("incorrect client transport validation")
+			}
+			server := ServerConfig{Transport: tc.input, ListenAddr: ":443", TokenFile: "tokens"}
+			if err := server.SetDefaults(); tc.want == "" {
+				if err == nil {
+					t.Fatal("unknown server transport accepted")
+				}
+				return
+			} else if err != nil || server.Transport != tc.want {
+				t.Fatal("incorrect server default", err)
+			}
+			needCertificate := tc.want != "tcp-plain"
+			if (server.Validate() != nil) != needCertificate {
+				t.Fatal("wrong certificate requirement")
+			}
+			server.CertFile, server.KeyFile = "cert", "key"
+			if err := server.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

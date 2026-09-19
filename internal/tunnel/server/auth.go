@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/shikanon/socks5proxy/internal/tunnel/protocol"
 )
 
 type TokenStore struct {
@@ -73,6 +75,12 @@ func (s *TokenStore) Authenticate(clientID, token string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare(expected[:], actual[:]) == 1
+}
+
+func (s *TokenStore) AuthenticateProof(challenge string, request protocol.Message) ([sha256.Size]byte, bool) {
+	key, known := s.hashes[request.ClientID]
+	valid := protocol.VerifyAuthProof(key, protocol.ClientProofRole, challenge, request.Nonce, request)
+	return key, known && valid && request.Type == protocol.TypeAuthRequest
 }
 
 func (s *TokenStore) ClientIDs() []string {

@@ -14,6 +14,7 @@ import (
 
 func main() {
 	mode := flag.String("mode", "proxy", "Run mode: proxy or tunnel")
+	transportMode := flag.String("transport", "quic", "Tunnel transport: quic, tcp (TLS), or tcp-plain (unencrypted)")
 	listenAddr := flag.String("local", ":18888", "Input server listen address(Default 8888):")
 	passwd := flag.String("passwd", "", "Input server proxy password:")
 	encrytype := flag.String("type", "random", "Input traffic obfuscation type (simple/random, not secure encryption):")
@@ -25,7 +26,7 @@ func main() {
 	mtu := flag.Int("mtu", tunnel.DefaultMTU, "Tunnel MTU (576-1400)")
 	outbound := flag.String("outbound-interface", "", "Linux outbound interface for tunnel NAT")
 	manageNetwork := flag.Bool("manage-network", true, "Configure Linux forwarding and NAT")
-	obfsAllow := flag.String("obfs-allow", "none,simple,random", "Allowed TLS-inner obfuscation modes")
+	obfsAllow := flag.String("obfs-allow", "none,simple,random", "Allowed tunnel obfuscation modes (not encryption)")
 	tunName := flag.String("tun-name", "socks5tun0", "Tunnel interface name")
 	stateDir := flag.String("state-dir", "", "Directory for recoverable network state")
 	flag.Parse()
@@ -47,6 +48,7 @@ func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		if err := tunnelserver.Run(ctx, tunnel.ServerConfig{
+			Transport:         *transportMode,
 			ListenAddr:        *listenAddr,
 			CertFile:          *certFile,
 			KeyFile:           *keyFile,

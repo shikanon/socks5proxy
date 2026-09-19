@@ -22,11 +22,13 @@ type Device interface {
 const packetOffset = 16
 
 type Native struct {
-	dev     tun.Device
-	name    string
-	mtu     int
-	readMu  sync.Mutex
-	pending [][]byte
+	dev       tun.Device
+	name      string
+	mtu       int
+	readMu    sync.Mutex
+	pending   [][]byte
+	readBufs  [][]byte
+	readSizes []int
 }
 
 func Create(name string, mtu int) (*Native, error) {
@@ -75,15 +77,20 @@ func (d *Native) ReadPacket() ([]byte, error) {
 		return packet, nil
 	}
 
-	batchSize := d.dev.BatchSize()
-	if batchSize < 1 {
-		batchSize = 1
+	if d.readBufs == nil {
+		batchSize := d.dev.BatchSize()
+		if batchSize < 1 {
+			batchSize = 1
+		}
+		d.readBufs = make([][]byte, batchSize)
+		d.readSizes = make([]int, batchSize)
+		for i := range d.readBufs {
+			d.readBufs[i] = make([]byte, packetOffset+65535)
+		}
 	}
-	bufs := make([][]byte, batchSize)
-	sizes := make([]int, batchSize)
-	for i := range bufs {
-		bufs[i] = make([]byte, packetOffset+65535)
-	}
+	// Native reads are serialized. Reuse the large batch workspace while
+	// returning owned packet copies to asynchronous transport workers.
+	bufs, sizes := d.readBufs, d.readSizes
 	n, err := d.dev.Read(bufs, sizes, packetOffset)
 	if err != nil {
 		return nil, err

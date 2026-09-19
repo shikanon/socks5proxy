@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/netip"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -31,6 +34,8 @@ type Server struct {
 }
 
 func Run(ctx context.Context, config tunnel.ServerConfig) error {
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("tunnel server requires Linux, got %s", runtime.GOOS)
 	}
@@ -40,7 +45,7 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	if config.MTU > tunnel.DefaultMTU {
+	if config.Transport == "quic" && config.MTU > tunnel.DefaultMTU {
 		log.Printf("limiting tunnel MTU from %d to %d for QUIC datagram capacity", config.MTU, tunnel.DefaultMTU)
 		config.MTU = tunnel.DefaultMTU
 	}
@@ -55,9 +60,14 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 	if err := pool.Reserve(tokens.ClientIDs()); err != nil {
 		return err
 	}
-	tlsConfig, err := transport.ServerTLS(config.CertFile, config.KeyFile)
-	if err != nil {
-		return err
+	var tlsConfig *tls.Config
+	if config.Transport != "tcp-plain" {
+		tlsConfig, err = transport.ServerTLS(config.CertFile, config.KeyFile)
+		if err != nil {
+			return err
+		}
+	} else {
+		log.Print("WARNING: tcp-plain has no packet encryption or integrity; obfuscation is not security")
 	}
 	tunDevice, err := device.Create(config.TUNName, config.MTU)
 	if err != nil {
@@ -89,7 +99,7 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 		}
 	}()
 
-	listener, err := transport.Listen(config.ListenAddr, tlsConfig)
+	listener, err := transport.ListenTunnel(config.ListenAddr, tlsConfig, config.Transport)
 	if err != nil {
 		return err
 	}
@@ -102,6 +112,13 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 		tokens:   tokens,
 		sessions: newSessionTable(),
 	}
+	var handlers sync.WaitGroup
+	defer func() {
+		cancelRun()
+		server.sessions.closeAll()
+		_ = listener.Close()
+		handlers.Wait()
+	}()
 	go func() {
 		<-ctx.Done()
 		server.sessions.closeAll()
@@ -109,7 +126,7 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 	}()
 	go server.downlink(ctx)
 
-	log.Printf("tunnel server listening on %s with TUN %s", config.ListenAddr, tunDevice.Name())
+	log.Printf("tunnel server listening on %s transport=%s with TUN %s", config.ListenAddr, config.Transport, tunDevice.Name())
 	for {
 		conn, err := listener.Accept(ctx)
 		if err != nil {
@@ -118,25 +135,42 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 			}
 			return err
 		}
-		go server.handleConnection(ctx, conn)
+		handlers.Add(1)
+		go func() {
+			defer handlers.Done()
+			server.handleConnection(ctx, conn)
+		}()
 	}
 }
 
-func (s *Server) handleConnection(parent context.Context, conn *quic.Conn) {
+func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	defer conn.CloseWithError(0, "session closed")
-	datagrams := conn.ConnectionState().SupportsDatagrams
-	if !datagrams.Local || !datagrams.Remote {
-		_ = conn.CloseWithError(1, "QUIC DATAGRAM is required")
-		return
-	}
+	stopParent := context.AfterFunc(ctx, func() { _ = conn.CloseWithError(0, "server context canceled") })
+	defer stopParent()
 
 	authCtx, authCancel := context.WithTimeout(ctx, 10*time.Second)
-	stream, err := conn.AcceptStream(authCtx)
-	authCancel()
+	defer authCancel()
+	stopAuth := context.AfterFunc(authCtx, func() { _ = conn.CloseWithError(1, "authentication timed out") })
+	defer stopAuth()
+	stream, err := conn.AcceptControl(authCtx)
 	if err != nil {
 		return
+	}
+	deadline, _ := authCtx.Deadline()
+	if stream.SetDeadline(deadline) != nil {
+		return
+	}
+	isTCP := s.config.Transport == "tcp" || s.config.Transport == "tcp-plain"
+	challenge := ""
+	if isTCP {
+		challenge, err = protocol.NewNonce()
+		if err != nil || protocol.WriteMessage(stream, protocol.Message{
+			Type: protocol.TypeAuthChallenge, Version: protocol.Version, Nonce: challenge,
+		}) != nil {
+			return
+		}
 	}
 	request, err := protocol.ReadMessage(stream)
 	if err != nil || request.Type != protocol.TypeAuthRequest {
@@ -144,11 +178,24 @@ func (s *Server) handleConnection(parent context.Context, conn *quic.Conn) {
 		return
 	}
 	obfs, err := tunnel.NormalizeObfs(request.Obfs)
-	if err != nil || !s.config.ObfsAllow[obfs] || len(request.Token) < 32 || !s.tokens.Authenticate(request.ClientID, request.Token) {
+	if err != nil || !s.config.ObfsAllow[obfs] {
 		s.reject(stream)
 		return
 	}
-	cipher, err := tunnel.NewObfuscator(obfs, request.Token)
+	obfsKey := request.Token
+	var proofKey [sha256.Size]byte
+	authenticated := false
+	if isTCP {
+		proofKey, authenticated = s.tokens.AuthenticateProof(challenge, request)
+		obfsKey = hex.EncodeToString(proofKey[:])
+	} else {
+		authenticated = len(request.Token) >= 32 && s.tokens.Authenticate(request.ClientID, request.Token)
+	}
+	if !authenticated {
+		s.reject(stream)
+		return
+	}
+	cipher, err := tunnel.NewObfuscator(obfs, obfsKey)
 	if err != nil {
 		s.reject(stream)
 		return
@@ -168,7 +215,7 @@ func (s *Server) handleConnection(parent context.Context, conn *quic.Conn) {
 		send:     make(chan []byte, sessionQueueSize),
 		started:  time.Now(),
 	}
-	if err := protocol.WriteMessage(stream, protocol.Message{
+	response := protocol.Message{
 		Type:       protocol.TypeAuthResponse,
 		Version:    protocol.Version,
 		SessionID:  current.id,
@@ -177,10 +224,20 @@ func (s *Server) handleConnection(parent context.Context, conn *quic.Conn) {
 		MTU:        s.config.MTU,
 		DNSIPv4:    s.config.DNS,
 		Obfs:       obfs,
-	}); err != nil {
+	}
+	if isTCP {
+		response.Proof = protocol.AuthProof(proofKey, protocol.ServerProofRole, challenge, request.Nonce, response)
+	}
+	if err := protocol.WriteMessage(stream, response); err != nil {
 		return
 	}
-	_ = stream.Close()
+	if stream.Close() != nil {
+		return
+	}
+	if !stopAuth() || authCtx.Err() != nil {
+		return
+	}
+	authCancel()
 
 	previous := s.sessions.register(current)
 	if previous != nil {
@@ -188,7 +245,16 @@ func (s *Server) handleConnection(parent context.Context, conn *quic.Conn) {
 	}
 	defer s.sessions.remove(current)
 	defer s.logSession(current)
-	go s.sendLoop(ctx, current)
+	sendDone := make(chan struct{})
+	go func() {
+		defer close(sendDone)
+		s.sendLoop(ctx, current)
+	}()
+	defer func() {
+		cancel()
+		_ = conn.CloseWithError(0, "session closed")
+		<-sendDone
+	}()
 
 	for {
 		payload, err := conn.ReceiveDatagram(ctx)
@@ -207,13 +273,12 @@ func (s *Server) handleConnection(parent context.Context, conn *quic.Conn) {
 	}
 }
 
-func (s *Server) reject(stream *quic.Stream) {
+func (s *Server) reject(stream transport.ControlStream) {
 	_ = protocol.WriteMessage(stream, protocol.Message{
 		Type:    protocol.TypeError,
 		Version: protocol.Version,
 		Error:   "authentication failed",
 	})
-	_ = stream.Close()
 }
 
 func (s *Server) sendLoop(ctx context.Context, current *session) {

@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/quic-go/quic-go"
 	"github.com/shikanon/socks5proxy/internal/tunnel/protocol"
+	"github.com/shikanon/socks5proxy/internal/tunnel/transport"
 )
 
 type session struct {
@@ -16,7 +16,7 @@ type session struct {
 	addr      netip.Addr
 	obfs      string
 	cipher    protocol.Cipher
-	conn      *quic.Conn
+	conn      transport.Conn
 	send      chan []byte
 	started   time.Time
 	sentBytes atomic.Uint64

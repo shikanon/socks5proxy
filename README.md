@@ -14,12 +14,13 @@
 项目同时支持两种运行模式：
 
 - `proxy`：原有 HTTP/SOCKS5 应用代理，继续支持 `simple` / `random` 简易加密（流量混淆）。
-- `tunnel`：macOS/Windows 全局 IPv4 TUN，使用 QUIC + TLS 1.3 连接 Linux 服务端，并可在 TLS 内层选择 `none` / `simple` / `random`。
+- `tunnel`：Linux/macOS/Windows 全局 IPv4 TUN，默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）或显式无加密 TCP（`-transport tcp-plain`），支持 `none` / `simple` / `random` 混淆。
 
 ## 安全说明
 
 - 当前 `simple` / `random` 仅用于流量混淆，不是安全加密，也不提供现代意义上的机密性、完整性或重放防护。
-- 全局隧道始终使用 TLS 1.3 提供机密性、完整性和服务端认证；`simple` / `random` 只能作为 TLS 内层的可选附加混淆。
+- 全局隧道默认 `quic`，以及可选的 `tcp`，使用 TLS 1.3；不会自动降级为明文。`tcp-plain` 不提供 IP 包机密性或完整性，即使使用 `random` 也是如此。
+- 两个 TCP 后端使用新鲜随机挑战和 HMAC 认证，线路上传输认证证明，不直接发送令牌或摘要。摘要本身等价于 TCP 认证凭据，应保密；明文模式仍可被监听、篡改或中继，应使用独立测试令牌。
 - 不要把 `simple` / `random` 当作 TLS、SSH、WireGuard 或 AEAD 安全通道的替代品。
 
 
