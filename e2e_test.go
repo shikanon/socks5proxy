@@ -51,6 +51,30 @@ func TestConncet(t *testing.T) {
 	wg.Wait()
 }
 
+func TestSimpleProxyConnect(t *testing.T) {
+	go Server("127.0.0.1:18389", "simple", "simple-passphrase")
+	go Client("127.0.0.1:18390", "127.0.0.1:18389", "simple", "simple-passphrase", "socks5")
+
+	time.Sleep(1 * time.Second)
+
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:18390", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		t.Fatal(err)
+	}
+	response := make([]byte, 2)
+	if _, err := io.ReadFull(conn, response); err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, []byte{0x05, 0x00}, response)
+}
+
 func TestHTTPConnect(t *testing.T) {
 	go Server("127.0.0.1:18289", "random", "abcedfg1")
 	go Client("127.0.0.1:18290", "127.0.0.1:18289", "random", "abcedfg1", "http")

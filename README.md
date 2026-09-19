@@ -11,11 +11,16 @@
 
 用golang 实现了一个简单的socks5协议来实现代理转发，主要应用场景是給公司内部做VPN登陆，提供内网访问。*(声明：由于采用的是原始的socks5协议，并没有对协议做改造加工，并不一定能防范GFW的主动探测，请勿用于非法用途)*
 
+项目同时支持两种运行模式：
+
+- `proxy`：原有 HTTP/SOCKS5 应用代理，继续支持 `simple` / `random` 简易加密（流量混淆）。
+- `tunnel`：macOS/Windows 全局 IPv4 TUN，使用 QUIC + TLS 1.3 连接 Linux 服务端，并可在 TLS 内层选择 `none` / `simple` / `random`。
+
 ## 安全说明
 
 - 当前 `simple` / `random` 仅用于流量混淆，不是安全加密，也不提供现代意义上的机密性、完整性或重放防护。
-- 不要把本项目当前的混淆层当作 TLS、SSH、WireGuard 或 AEAD 安全通道的替代品。
-- 如果你的场景需要抗主动攻击、内容保密或篡改检测，请在外层叠加真正的安全传输层。
+- 全局隧道始终使用 TLS 1.3 提供机密性、完整性和服务端认证；`simple` / `random` 只能作为 TLS 内层的可选附加混淆。
+- 不要把 `simple` / `random` 当作 TLS、SSH、WireGuard 或 AEAD 安全通道的替代品。
 
 
 文件结构
@@ -26,14 +31,18 @@ server.go           `服务端实现`
 client.go           `客户端实现`
 cmd/server/main.go  `服务端主启动程序`
 cmd/client/main.go  `客户端主启动程`
+internal/tunnel/    `全局加密隧道、TUN 和系统网络配置`
 ```
 
 
 - [SOCKS5协议介绍](./docs/socks5.md)
 - [流量混淆算法介绍](./docs/cryptogram.md)
+- [全局加密隧道部署](./docs/tunnel.md)
 - [软件下载及版本说明](./docs/release.md)
 
 #### 使用说明
+
+以下参数说明为兼容保留的 `proxy` 模式。macOS/Windows 全局隧道请参阅[全局加密隧道部署](./docs/tunnel.md)。
 
 **服务端**
 在服务器端中启动路径，打开。/cmd/server/，运行`go run main.go`

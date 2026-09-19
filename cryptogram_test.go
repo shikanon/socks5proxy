@@ -82,6 +82,26 @@ func TestCipherDerivationUsesPasswordContent(t *testing.T) {
 	assert.NotEqual(t, randomA.Encode, randomB.Encode)
 }
 
+func TestSimpleCipherCompatibilityVector(t *testing.T) {
+	auth, err := CreateSimpleCipher("abc")
+	assert.NoError(t, err)
+	payload := []byte{0x00, 0x01, 0xff}
+
+	assert.NoError(t, auth.Encrypt(payload))
+
+	assert.Equal(t, []byte{0x26, 0x27, 0x25}, payload)
+}
+
+func TestRandomCipherCompatibilityVector(t *testing.T) {
+	auth, err := CreateRandomCipher("123456")
+	assert.NoError(t, err)
+	payload := []byte{0x00, 0x01, 0x02}
+
+	assert.NoError(t, auth.Encrypt(payload))
+
+	assert.Equal(t, []byte{0xb8, 0x5f, 0xda}, payload)
+}
+
 func TestSecureCopyOnlySecuresValidBytes(t *testing.T) {
 	src := &bufferReadWriteCloser{Buffer: bytes.NewBufferString("abc")}
 	dst := &bufferReadWriteCloser{Buffer: bytes.NewBuffer(nil)}

@@ -7,12 +7,23 @@
 1. 推送形如 `v1.2.3` 的 Git tag。
 2. GitHub Actions `Release` workflow 会自动构建发布物并创建/更新对应 Release。
 3. Release 页面会附带以下产物：
+   - `socks5proxy_client_darwin_amd64`
+   - `socks5proxy_client_darwin_arm64`
    - `socks5proxy_client_linux_amd64`
    - `socks5proxy_server_linux_amd64`
    - `socks5proxy_client_windows_amd64.exe`
+   - `socks5proxy_client_windows_amd64.zip`
    - `socks5proxy_server_windows_amd64.exe`
    - `SHA256SUMS`
    - `SHA256SUMS.sig`（仅在仓库配置了 cosign 密钥时生成）
+
+Windows ZIP 包包含：
+
+- `socks5proxy_client_windows_amd64.exe`
+- 官方签名的 Wintun 0.14.1 `wintun.dll`
+- `WINTUN_LICENSE.txt`
+
+Windows 全局隧道应使用 ZIP 包并保持 DLL 与 EXE 位于同一目录。独立 EXE 仍可用于原有代理模式。
 
 ## 校验方式
 

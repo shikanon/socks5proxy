@@ -31,9 +31,65 @@ jobs:
         run: go vet ./...
 
       - name: Run tests
-        run: go test ./...
+        run: go test -race -timeout 60s ./...
+
+      - name: Run Linux TUN integration test
+        run: |
+          set +e
+          sudo env "PATH=$PATH" ./scripts/test-tunnel-linux.sh
+          status=$?
+          set -e
+          if [ "$status" -eq 77 ]; then
+            echo "Linux TUN integration test skipped: runner prerequisites unavailable."
+            exit 0
+          fi
+          exit "$status"
 
       - name: Run staticcheck
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
           staticcheck ./...
+
+  cross-build:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+            component: client
+            extension: ""
+          - goos: darwin
+            goarch: arm64
+            component: client
+            extension: ""
+          - goos: windows
+            goarch: amd64
+            component: client
+            extension: ".exe"
+          - goos: linux
+            goarch: amd64
+            component: server
+            extension: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build target
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build \
+            -trimpath \
+            -o "/tmp/socks5proxy_${{ matrix.component }}_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.extension }}" \
+            "./cmd/${{ matrix.component }}"
