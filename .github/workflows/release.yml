@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: "0"
+      HAS_COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,11 +52,11 @@ jobs:
           sha256sum * > SHA256SUMS
 
       - name: Install cosign
-        if: ${{ secrets.COSIGN_PRIVATE_KEY != '' }}
+        if: ${{ env.HAS_COSIGN_KEY == 'true' }}
         uses: sigstore/cosign-installer@v3
 
       - name: Sign checksums
-        if: ${{ secrets.COSIGN_PRIVATE_KEY != '' }}
+        if: ${{ env.HAS_COSIGN_KEY == 'true' }}
         env:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}

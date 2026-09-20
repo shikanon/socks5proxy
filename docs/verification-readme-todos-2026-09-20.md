@@ -80,3 +80,14 @@ CI 增加相同的低 FD 检查，未来变更继续覆盖回收行为。日志�
 - `docs/release.md`：真实 Releases 入口、系统/架构选择、单资产校验、源码和移动构建入口。
 
 客户端 CLI 默认监听改为 `127.0.0.1:8888`；需要其他机器访问时必须显式设置 `-local`。普通 HTTP 每条本地连接处理一次请求并关闭；请求头上限 32 KiB，主体流式转发。静默连接会受新增空闲超时约束，长空闲应用应配置更大预算。应用代理混淆仍不提供密码学安全性。
+
+## 推送后的检查
+
+经授权将多平台提交 `9e8cb8a` 和本次修复 `5675918` 推送到 master。远程 [CI #13](https://github.com/shikanon/socks5proxy/actions/runs/35514833321) 全部通过；[移动构建 #1](https://github.com/shikanon/socks5proxy/actions/runs/35514833310) 的 iOS job 成功并上传产物，Android SDK 安装失败。
+
+远程检查另确认两处 workflow 问题并作后续修复：
+
+- Release 的 step `if` 不支持直接使用 `secrets` 上下文：改在 job 环境计算 `HAS_COSIGN_KEY` 布尔值，step 按 `env` 判断，不暴露密钥值。
+- `android-actions/setup-android@v3` 默认安装已下架的 `tools` 包：显式指定 `packages: platform-tools`；现有 API 35、build-tools、NDK 安装步骤保留。
+
+修复后的全部 workflow 通过 actionlint 1.7.12 校验。#2/#3 已附修复与验证依据并关闭；#29 原已由 #42 关闭，补充本次安全模型文档完成记录；#4 保持此前已完成状态。
