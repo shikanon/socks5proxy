@@ -6,6 +6,7 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/shikanon/socks5proxy"
 	"github.com/shikanon/socks5proxy/internal/tunnel"
@@ -15,11 +16,15 @@ import (
 func main() {
 	mode := flag.String("mode", "proxy", "Run mode: proxy or tunnel")
 	transportMode := flag.String("transport", "quic", "Tunnel transport: quic, tcp (TLS), or tcp-plain (unencrypted)")
-	listenAddr := flag.String("local", ":8888", "Input server listen address(Default 8888):")
+	listenAddr := flag.String("local", "127.0.0.1:8888", "Local application proxy listen address")
 	serverAddr := flag.String("server", "", "Input server listen address:")
 	passwd := flag.String("passwd", "", "Input server proxy password:")
 	encrytype := flag.String("type", "random", "Input traffic obfuscation type (simple/random, not secure encryption):")
 	recvHTTPProto := flag.String("recv", "http", "Upstream protocol mode: http or socks5 (default http):")
+	maxConnections := flag.Int("max-connections", 256, "Maximum simultaneous proxy sessions")
+	dialTimeout := flag.Duration("dial-timeout", 10*time.Second, "Proxy upstream/destination dial timeout")
+	handshakeTimeout := flag.Duration("handshake-timeout", 10*time.Second, "Proxy handshake timeout")
+	idleTimeout := flag.Duration("idle-timeout", 5*time.Minute, "Proxy timeout with no traffic in either direction")
 	clientID := flag.String("client-id", "", "Tunnel client identifier")
 	tokenFile := flag.String("token-file", "", "Path to tunnel client token file")
 	caFile := flag.String("ca", "", "Path to tunnel server CA certificate (default: system roots)")
@@ -38,11 +43,18 @@ func main() {
 	switch *mode {
 	case "proxy":
 		if *passwd == "" {
-			log.Fatal("请通过 -passwd 设置一个强密码（不能为空）")
+			log.Fatal("请通过 -passwd 设置非空混淆密码；混淆不提供安全加密")
 		}
 		log.Println("客户端正在启动...")
 		log.Println("recv proto:", *recvHTTPProto)
-		log.Fatal(socks5proxy.Client(*listenAddr, *serverAddr, *encrytype, *passwd, *recvHTTPProto))
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := socks5proxy.ClientContext(ctx, *listenAddr, *serverAddr, *encrytype, *passwd, *recvHTTPProto, socks5proxy.ProxyOptions{
+			MaxConnections: *maxConnections, DialTimeout: *dialTimeout,
+			HandshakeTimeout: *handshakeTimeout, IdleTimeout: *idleTimeout,
+		}); err != nil {
+			log.Fatal(err)
+		}
 	case "tunnel":
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()

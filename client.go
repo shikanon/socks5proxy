@@ -1,195 +1,112 @@
 package socks5proxy
 
 import (
-	"bytes"
-	"encoding/binary"
+	"context"
 	"errors"
+	"io"
 	"log"
 	"net"
-	"net/url"
-	"strconv"
-	"strings"
-	"sync"
 )
 
-func handleProxyRequest(localClient *net.TCPConn, serverAddr *net.TCPAddr, auth socks5Auth, recvHTTPProto string) error {
-
-	// 远程连接IO
-	dstServer, err := net.DialTCP("tcp", nil, serverAddr)
-	if err != nil {
-		return err
-	}
-	defer dstServer.Close()
-
-	defer localClient.Close()
-
-	// 和远程端建立安全信道
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-
-	if recvHTTPProto == "http" {
-		// socket5请求认证协商
-		// 第一阶段协议版本及认证方式
-		auth.EncodeWrite(dstServer, []byte{0x05, 0x01, 0x00})
-		resp := make([]byte, 1024)
-		n, err := auth.DecodeRead(dstServer, resp)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return errors.New("协议错误,服务器返回为空")
-		}
-		if resp[1] == 0x00 && n == 2 {
-			log.Print("success")
-		} else {
-			return errors.New("协议错误，连接失败")
-		}
-		// 第二阶段根据认证方式执行对应的认证，由于采用无密码格式，这里省略验证
-		// 第三阶段请求信息
-		// VER, CMD, RSV, ATYP, ADDR, PORT
-		buff := make([]byte, 1024)
-		n, err = localClient.Read(buff)
-		if err != nil {
-			return err
-		}
-		localReq := buff[:n]
-		j := 0
-		z := 0
-		httpreq := []string{}
-		for i := 0; i < n; i++ {
-			if buff[i] == 32 {
-				httpreq = append(httpreq, string(buff[j:i]))
-				j = i + 1
-			}
-			if buff[i] == 10 {
-				z += 1
-			}
-		}
-
-		dstURI, err := url.ParseRequestURI(httpreq[1])
-		if err != nil {
-			return err
-		}
-		var dstAddr string
-		var dstPort = "80"
-		dstAddrPort := strings.Split(dstURI.Host, ":")
-		if len(dstAddrPort) == 1 {
-			dstAddr = dstAddrPort[0]
-		} else if len(dstAddrPort) == 2 {
-			dstAddr = dstAddrPort[0]
-			dstPort = dstAddrPort[1]
-		} else {
-			return errors.New("URL parse error")
-		}
-
-		resp = []byte{0x05, 0x01, 0x00, 0x03}
-		// 域名
-		// dstAddrLenBuff := bytes.NewBuffer(make([]byte, 1))
-		// binary.BigEndian.PutUint16(dstAddrLenBuff, uint8(len(dstAddr)))
-		// binary.Write(dstAddrLenBuff, binary.BigEndian, uint8(len(dstAddr)))
-		// log.Print("AdrrLength:", dstAddrLenBuff.Bytes()[dstAddrLenBuff.Len()-1])
-		// resp = append(resp, dstAddrLenBuff.Bytes()[dstAddrLenBuff.Len()-1])
-		resp = append(resp, byte(len([]byte(dstAddr))))
-		resp = append(resp, []byte(dstAddr)...)
-		// 端口
-		dstPortBuff := bytes.NewBuffer(make([]byte, 0))
-		dstPortInt, err := strconv.ParseUint(dstPort, 10, 16)
-		if err != nil {
-			return err
-		}
-		binary.Write(dstPortBuff, binary.BigEndian, dstPortInt)
-		dstPortBytes := dstPortBuff.Bytes() // int为8字节
-		resp = append(resp, dstPortBytes[len(dstPortBytes)-2:]...)
-		_, err = auth.EncodeWrite(dstServer, resp)
-		if err != nil {
-			return err
-		}
-		n, err = auth.DecodeRead(dstServer, resp)
-		if err != nil {
-			return err
-		}
-		var targetResp [10]byte
-		copy(targetResp[:10], resp[:n])
-		specialResp := [10]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
-		if targetResp != specialResp {
-			return errors.New("协议错误, 第二次协商返回出错")
-		}
-		log.Print("认证成功")
-
-		// 转发消息
-		go func() {
-			defer wg.Done()
-			if err := auth.Encrypt(localReq); err != nil {
-				log.Print(err)
-				return
-			}
-			if _, err := dstServer.Write(localReq); err != nil {
-				log.Print(err)
-			}
-			// SecureCopy(localClient, dstServer, auth.Encrypt)
-		}()
-
-		go func() {
-			defer wg.Done()
-			SecureCopy(dstServer, localClient, auth.Decrypt)
-		}()
-
-		wg.Wait()
-	} else if recvHTTPProto == "socks5" {
-		// 本地的内容copy到远程端
-		go func() {
-			defer wg.Done()
-			SecureCopy(localClient, dstServer, auth.Encrypt)
-		}()
-
-		// 远程得到的内容copy到源地址
-		go func() {
-			defer wg.Done()
-			SecureCopy(dstServer, localClient, auth.Decrypt)
-		}()
-		wg.Wait()
-	} else {
-		return errors.New("recv 参数仅支持 http 或 socks5")
-	}
-
-	return nil
+func handleProxyRequest(local *net.TCPConn, server *net.TCPAddr, auth socks5Auth, mode string) error {
+	options, _ := (ProxyOptions{}).normalized()
+	return handleProxySession(context.Background(), local, server.String(), auth, mode, options)
 }
 
-func Client(listenAddrString string, serverAddrString string, encrytype string, passwd string, recvHTTPProto string) error {
-	//所有客户服务端的流都加密,
-	auth, err := CreateAuth(encrytype, passwd)
+func handleProxySession(ctx context.Context, local net.Conn, remote string, auth socks5Auth, mode string, options ProxyOptions) error {
+	defer local.Close() // Includes dial failure and protocol validation failure.
+	handshakeCtx, cancel := context.WithTimeout(ctx, options.HandshakeTimeout)
+	defer cancel()
+	deadline, _ := handshakeCtx.Deadline()
+	local.SetDeadline(deadline)
+	remoteConn, err := dialProxy(handshakeCtx, remote, options)
 	if err != nil {
-		return err
-	}
-
-	// proxy地址
-	serverAddr, err := net.ResolveTCPAddr("tcp", serverAddrString)
-	if err != nil {
-		return err
-	}
-	log.Printf("连接远程服务器: %s ....", serverAddrString)
-
-	listenAddr, err := net.ResolveTCPAddr("tcp", listenAddrString)
-	if err != nil {
-		return err
-	}
-	log.Printf("监听本地端口: %s ", listenAddrString)
-
-	listener, err := net.ListenTCP("tcp", listenAddr)
-	if err != nil {
-		return err
-	}
-
-	for {
-		localClient, err := listener.AcceptTCP()
-		if err != nil {
-			log.Print(err)
-			continue
+		if mode == "http" {
+			writeHTTPError(local, 502)
 		}
-		go func(clientConn *net.TCPConn) {
-			if err := handleProxyRequest(clientConn, serverAddr, auth, recvHTTPProto); err != nil {
-				log.Print(err)
-			}
-		}(localClient)
+		return err
 	}
+	defer remoteConn.Close()
+	stop := context.AfterFunc(ctx, func() { remoteConn.Close() })
+	defer stop()
+	remoteConn.SetDeadline(deadline)
+	wire := &cipherConn{remoteConn, auth}
+	switch mode {
+	case "http":
+		return handleHTTPProxy(ctx, local, wire, options)
+	case "socks5":
+		greeting := make([]byte, 2)
+		if _, err := io.ReadFull(local, greeting); err != nil {
+			return err
+		}
+		methods := make([]byte, int(greeting[1]))
+		if _, err := io.ReadFull(local, methods); err != nil {
+			return err
+		}
+		if err := writeProxy(wire, append(greeting, methods...)); err != nil {
+			return err
+		}
+		response := make([]byte, 2)
+		if _, err := io.ReadFull(wire, response); err != nil {
+			return err
+		}
+		if err := writeProxy(local, response); err != nil {
+			return err
+		}
+		if response[0] != 5 || response[1] != 0 {
+			return errors.New("SOCKS authentication negotiation failed")
+		}
+		request, err := readRequestFrame(local)
+		if err != nil {
+			return err
+		}
+		if err := writeProxy(wire, request); err != nil {
+			return err
+		}
+		response, err = readRequestFrame(wire)
+		if err != nil {
+			return err
+		}
+		if err := writeProxy(local, response); err != nil {
+			return err
+		}
+		if response[0] != 5 || response[1] != 0 {
+			return errors.New("SOCKS destination connection failed")
+		}
+		cancel()
+		return relayProxy(ctx, local, wire, nil, options.IdleTimeout)
+	default:
+		return errors.New("recv 参数仅支持 http 或 socks5")
+	}
+}
+
+// Client retains the original blocking API using default resource limits.
+func Client(local, remote, obfs, password, mode string) error {
+	return ClientContext(context.Background(), local, remote, obfs, password, mode, ProxyOptions{})
+}
+
+// ClientContext serves an HTTP or SOCKS5 application proxy until cancellation.
+func ClientContext(ctx context.Context, local, remote, obfs, password, mode string, options ProxyOptions) error {
+	if mode != "http" && mode != "socks5" {
+		return errors.New("recv 参数仅支持 http 或 socks5")
+	}
+	options, err := options.normalized()
+	if err != nil {
+		return err
+	}
+	if err := validateProxyAddress(remote); err != nil {
+		return err
+	}
+	auth, err := CreateAuth(obfs, password)
+	if err != nil {
+		return err
+	}
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", local)
+	if err != nil {
+		return err
+	}
+	log.Printf("监听本地端口: %s; 远程服务器: %s", listener.Addr(), remote)
+	return serveProxy(ctx, listener, options, func(ctx context.Context, conn net.Conn) error {
+		return handleProxySession(ctx, conn, remote, auth, mode, options)
+	})
 }

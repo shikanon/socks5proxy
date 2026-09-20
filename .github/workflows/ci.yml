@@ -33,6 +33,13 @@ jobs:
       - name: Run tests
         run: go test -race -timeout 60s ./...
 
+      - name: Check proxy resource recovery with low FD limit
+        run: |
+          go build -o /tmp/socks5proxy-client ./cmd/client
+          go build -o /tmp/socks5proxy-server ./cmd/server
+          python3 scripts/test-proxy-resources.py \
+            --client /tmp/socks5proxy-client --server /tmp/socks5proxy-server
+
       - name: Run Linux TUN integration test
         run: |
           set +e

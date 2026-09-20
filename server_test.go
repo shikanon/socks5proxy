@@ -69,13 +69,9 @@ func (s stubAuth) DecodeRead(rw io.ReadWriter, b []byte) (int, error) {
 
 func TestHandleHandshakeReturnsDecodeReadError(t *testing.T) {
 	expectedErr := errors.New("decode read failed")
-	auth := stubAuth{
-		decodeReadFunc: func(io.ReadWriter, []byte) (int, error) {
-			return 0, expectedErr
-		},
-	}
+	auth := stubAuth{}
 
-	err := handleHandshake(bytes.NewBuffer(nil), auth, make([]byte, 255), &ProtocolVersion{})
+	err := handleHandshake(&failingReadWriter{err: expectedErr}, auth, make([]byte, 255), &ProtocolVersion{})
 
 	assert.Equal(t, expectedErr, err)
 }
@@ -103,7 +99,7 @@ func TestHandleHandshakeReturnsEncodeWriteError(t *testing.T) {
 		},
 	}
 
-	err := handleHandshake(bytes.NewBuffer(nil), auth, make([]byte, 255), &ProtocolVersion{})
+	err := handleHandshake(bytes.NewBuffer([]byte{5, 1, 0}), auth, make([]byte, 255), &ProtocolVersion{})
 
 	assert.Equal(t, expectedErr, err)
 }
@@ -133,7 +129,7 @@ func TestHandleRequestHandlesFragmentedDomainRequest(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "localhost", request.DSTDOMAIN)
 	assert.Equal(t, uint16(80), request.DSTPORT)
-	assert.Equal(t, []byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, client.write.Bytes())
+	assert.Empty(t, client.write.Bytes(), "parsing alone must not acknowledge a destination connection")
 }
 
 func TestLSTRequestRejectsUnexpectedDomainLength(t *testing.T) {

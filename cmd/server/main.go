@@ -6,6 +6,7 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/shikanon/socks5proxy"
 	"github.com/shikanon/socks5proxy/internal/tunnel"
@@ -15,7 +16,11 @@ import (
 func main() {
 	mode := flag.String("mode", "proxy", "Run mode: proxy or tunnel")
 	transportMode := flag.String("transport", "quic", "Tunnel transport: quic, tcp (TLS), or tcp-plain (unencrypted)")
-	listenAddr := flag.String("local", ":18888", "Input server listen address(Default 8888):")
+	listenAddr := flag.String("local", ":18888", "Proxy server listen address")
+	maxConnections := flag.Int("max-connections", 256, "Maximum simultaneous proxy sessions")
+	dialTimeout := flag.Duration("dial-timeout", 10*time.Second, "Proxy destination dial timeout")
+	handshakeTimeout := flag.Duration("handshake-timeout", 10*time.Second, "Proxy handshake timeout")
+	idleTimeout := flag.Duration("idle-timeout", 5*time.Minute, "Proxy timeout with no traffic in either direction")
 	passwd := flag.String("passwd", "", "Input server proxy password:")
 	encrytype := flag.String("type", "random", "Input traffic obfuscation type (simple/random, not secure encryption):")
 	certFile := flag.String("cert", "", "Path to tunnel TLS certificate")
@@ -34,10 +39,15 @@ func main() {
 	switch *mode {
 	case "proxy":
 		if *passwd == "" {
-			log.Fatal("请通过 -passwd 设置一个强密码（不能为空）")
+			log.Fatal("请通过 -passwd 设置非空混淆密码；混淆不提供安全加密")
 		}
 		log.Println("服务器正在启动...")
-		if err := socks5proxy.Server(*listenAddr, *encrytype, *passwd); err != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := socks5proxy.ServerContext(ctx, *listenAddr, *encrytype, *passwd, socks5proxy.ProxyOptions{
+			MaxConnections: *maxConnections, DialTimeout: *dialTimeout,
+			HandshakeTimeout: *handshakeTimeout, IdleTimeout: *idleTimeout,
+		}); err != nil {
 			log.Fatal(err)
 		}
 	case "tunnel":

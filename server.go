@@ -1,32 +1,40 @@
 package socks5proxy
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
 	"net"
-	"sync"
+	"strconv"
+	"time"
 )
 
-func handleHandshake(client io.ReadWriter, auth socks5Auth, buff []byte, proto *ProtocolVersion) error {
-	n, err := auth.DecodeRead(client, buff)
+func handleHandshake(client io.ReadWriter, auth socks5Auth, _ []byte, proto *ProtocolVersion) error {
+	header, err := readEncryptedFull(client, auth, 2)
 	if err != nil {
 		return err
 	}
-
-	resp, err := proto.HandleHandshake(buff[:n])
+	methods, err := readEncryptedFull(client, auth, int(header[1]))
 	if err != nil {
 		return err
 	}
-
-	_, err = auth.EncodeWrite(client, resp)
-	return err
+	response, handshakeErr := proto.HandleHandshake(append(header, methods...))
+	if len(response) > 0 {
+		n, err := auth.EncodeWrite(client, response)
+		if err != nil {
+			return err
+		}
+		if n != len(response) {
+			return io.ErrShortWrite
+		}
+	}
+	return handshakeErr
 }
 
 func readEncryptedFull(reader io.Reader, auth socks5Auth, size int) ([]byte, error) {
 	buf := make([]byte, size)
-	_, err := io.ReadFull(reader, buf)
-	if err != nil {
+	if _, err := io.ReadFull(reader, buf); err != nil {
 		return nil, err
 	}
 	if err := auth.Decrypt(buf); err != nil {
@@ -35,127 +43,128 @@ func readEncryptedFull(reader io.Reader, auth socks5Auth, size int) ([]byte, err
 	return buf, nil
 }
 
-func handleRequest(client io.ReadWriter, auth socks5Auth, request *Socks5Resolution) error {
-	header, err := readEncryptedFull(client, auth, 4)
-	if err != nil {
-		return err
+// readRequestFrame reads just one SOCKS request, preserving any pipelined data.
+func readRequestFrame(reader io.Reader) ([]byte, error) {
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return nil, err
 	}
-
-	payload := append([]byte{}, header...)
 	var remaining int
 	switch header[3] {
 	case 1:
 		remaining = net.IPv4len + 2
 	case 3:
-		domainLenBytes, err := readEncryptedFull(client, auth, 1)
-		if err != nil {
-			return err
+		length := make([]byte, 1)
+		if _, err := io.ReadFull(reader, length); err != nil {
+			return nil, err
 		}
-		if domainLenBytes[0] == 0 {
-			return errors.New("域名长度错误")
+		if length[0] == 0 {
+			return nil, errors.New("域名长度错误")
 		}
-		payload = append(payload, domainLenBytes...)
-		remaining = int(domainLenBytes[0]) + 2
+		header = append(header, length...)
+		remaining = int(length[0]) + 2
 	case 4:
 		remaining = net.IPv6len + 2
 	default:
-		return errors.New("IP地址错误")
+		return nil, errors.New("IP地址错误")
 	}
+	tail := make([]byte, remaining)
+	if _, err := io.ReadFull(reader, tail); err != nil {
+		return nil, err
+	}
+	return append(header, tail...), nil
+}
 
-	tail, err := readEncryptedFull(client, auth, remaining)
+type cipherReader struct {
+	io.Reader
+	auth socks5Auth
+}
+
+func (r cipherReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	if n > 0 {
+		if decodeErr := r.auth.Decrypt(p[:n]); decodeErr != nil {
+			return 0, decodeErr
+		}
+	}
+	return n, err
+}
+
+func handleRequest(client io.ReadWriter, auth socks5Auth, request *Socks5Resolution) error {
+	payload, err := readRequestFrame(cipherReader{client, auth})
 	if err != nil {
 		return err
 	}
-	payload = append(payload, tail...)
-
-	resp, err := request.LSTRequest(payload)
-	if err != nil {
-		return err
-	}
-
-	_, err = auth.EncodeWrite(client, resp)
+	_, err = request.parseRequest(payload)
 	return err
+}
+
+func socksReply(code byte) []byte {
+	return []byte{5, code, 0, 1, 0, 0, 0, 0, 0, 0}
 }
 
 func handleClientRequest(client *net.TCPConn, auth socks5Auth) error {
 	if client == nil {
 		return nil
 	}
-	defer client.Close()
-
-	// 初始化一个字符串buff
-	buff := make([]byte, 255)
-
-	// 认证协商
-	var proto ProtocolVersion
-	if err := handleHandshake(client, auth, buff, &proto); err != nil {
-		return err
-	}
-
-	//获取客户端代理的请求
-	var request Socks5Resolution
-	if err := handleRequest(client, auth, &request); err != nil {
-		return err
-	}
-
-	log.Println(client.RemoteAddr(), request.DSTDOMAIN, request.DSTADDR, request.DSTPORT)
-
-	// 连接真正的远程服务
-	dstServer, err := net.DialTCP("tcp", nil, request.RAWADDR)
-	if err != nil {
-		return err
-	}
-	defer dstServer.Close()
-
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-
-	// 本地的内容copy到远程端
-	go func() {
-		defer wg.Done()
-		SecureCopy(client, dstServer, auth.Decrypt)
-	}()
-
-	// 远程得到的内容copy到源地址
-	go func() {
-		defer wg.Done()
-		SecureCopy(dstServer, client, auth.Encrypt)
-	}()
-	wg.Wait()
-
-	return nil
+	options, _ := (ProxyOptions{}).normalized()
+	return handleServerSession(context.Background(), client, auth, options)
 }
 
-func Server(listenAddrString string, encrytype string, passwd string) error {
-	//所有客户服务端的流都加密,
-	auth, err := CreateAuth(encrytype, passwd)
+func handleServerSession(ctx context.Context, client net.Conn, auth socks5Auth, options ProxyOptions) error {
+	defer client.Close()
+	handshakeCtx, cancel := context.WithTimeout(ctx, options.HandshakeTimeout)
+	defer cancel()
+	client.SetDeadline(time.Now().Add(options.HandshakeTimeout))
+	wire := &cipherConn{client, auth}
+	var proto ProtocolVersion
+	if err := handleHandshake(client, auth, nil, &proto); err != nil {
+		return err
+	}
+	var request Socks5Resolution
+	if err := handleRequest(client, auth, &request); err != nil {
+		_ = writeProxy(wire, socksReply(1))
+		return err
+	}
+	host := request.DSTDOMAIN
+	if host == "" {
+		host = net.IP(request.DSTADDR).String()
+	}
+	address := net.JoinHostPort(host, strconv.Itoa(int(request.DSTPORT)))
+	target, err := dialProxy(handshakeCtx, address, options)
+	if err != nil {
+		_ = writeProxy(wire, socksReply(5))
+		return err
+	}
+	defer target.Close()
+	if err := writeProxy(wire, socksReply(0)); err != nil {
+		return err
+	}
+	cancel()
+	return relayProxy(ctx, wire, target, nil, options.IdleTimeout)
+}
+
+// Server retains the original blocking API using default resource limits.
+func Server(local, obfs, password string) error {
+	return ServerContext(context.Background(), local, obfs, password, ProxyOptions{})
+}
+
+// ServerContext serves the obfuscated SOCKS proxy until cancellation.
+func ServerContext(ctx context.Context, local, obfs, password string, options ProxyOptions) error {
+	options, err := options.normalized()
 	if err != nil {
 		return err
 	}
-
-	// 监听客户端
-	listenAddr, err := net.ResolveTCPAddr("tcp", listenAddrString)
+	auth, err := CreateAuth(obfs, password)
 	if err != nil {
 		return err
 	}
-	log.Printf("监听服务器端口: %s ", listenAddrString)
-
-	listener, err := net.ListenTCP("tcp", listenAddr)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", local)
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
-
-	for {
-		conn, err := listener.AcceptTCP()
-		if err != nil {
-			log.Print(err)
-			continue
-		}
-		go func(clientConn *net.TCPConn) {
-			if err := handleClientRequest(clientConn, auth); err != nil {
-				log.Print(clientConn.RemoteAddr(), err)
-			}
-		}(conn)
-	}
+	log.Printf("监听服务器端口: %s", listener.Addr())
+	return serveProxy(ctx, listener, options, func(ctx context.Context, conn net.Conn) error {
+		return handleServerSession(ctx, conn, auth, options)
+	})
 }

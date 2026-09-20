@@ -56,12 +56,12 @@ func (s *ProtocolVersion) HandleHandshake(b []byte) ([]byte, error) {
 		return nil, errors.New("协议错误, version版本不为5")
 	}
 	s.NMETHODS = b[1] //nmethods是记录methods的长度的。nmethods的长度是1个字节
-	if n != int(2+s.NMETHODS) {
+	if n != 2+int(s.NMETHODS) {
 		return nil, errors.New("协议错误, sNMETHODS不对")
 	}
-	s.METHODS = b[2 : 2+s.NMETHODS] //读取指定长度信息，读取正好len(buf)长度的字节。如果字节数不是指定长度，则返回错误信息和正确的字节数
+	s.METHODS = b[2 : 2+int(s.NMETHODS)]
 
-	useMethod := byte(0x00) //默认不需要密码
+	useMethod := byte(0xff)
 	for _, v := range s.METHODS {
 		if v == METHOD_CODE {
 			useMethod = METHOD_CODE
@@ -77,7 +77,7 @@ func (s *ProtocolVersion) HandleHandshake(b []byte) ([]byte, error) {
 	// 第二个参数表示服务端选中的认证方法，0即无需密码访问, 2表示需要用户名和密码进行验证。
 	// 88是一种私有的加密协议
 	if useMethod != METHOD_CODE {
-		return nil, errors.New("协议错误, 加密方法不对")
+		return []byte{SOCKS_VERSION, 0xff}, errors.New("协议错误, 加密方法不对")
 	}
 	resp := []byte{SOCKS_VERSION, useMethod}
 	return resp, nil
@@ -183,6 +183,25 @@ type Socks5Resolution struct {
 }
 
 func (s *Socks5Resolution) LSTRequest(b []byte) ([]byte, error) {
+	resp, err := s.parseRequest(b)
+	if err != nil {
+		return nil, err
+	}
+	// Retain the exported parser's historical resolved RAWADDR contract.
+	if s.DSTDOMAIN != "" {
+		ipAddr, err := net.ResolveIPAddr("ip", s.DSTDOMAIN)
+		if err != nil {
+			return nil, err
+		}
+		s.DSTADDR = ipAddr.IP
+		s.RAWADDR.IP = ipAddr.IP
+	}
+	return resp, nil
+}
+
+// parseRequest leaves DNS to the production DialContext timeout.
+func (s *Socks5Resolution) parseRequest(b []byte) ([]byte, error) {
+	*s = Socks5Resolution{}
 	// b := make([]byte, 128)
 	// n, err := conn.Read(b)
 	n := len(b)
@@ -199,6 +218,9 @@ func (s *Socks5Resolution) LSTRequest(b []byte) ([]byte, error) {
 		return nil, errors.New("客户端请求类型不为代理连接, 其他功能暂时不支持")
 	}
 	s.RSV = b[2] //RSV保留字端，值长度为1个字节
+	if s.RSV != 0 {
+		return nil, errors.New("请求保留字段必须为零")
+	}
 
 	s.ATYP = b[3]
 	addrEnd := 0
@@ -225,11 +247,6 @@ func (s *Socks5Resolution) LSTRequest(b []byte) ([]byte, error) {
 			return nil, errors.New("请求协议长度错误")
 		}
 		s.DSTDOMAIN = string(b[5 : 5+domainLen])
-		ipAddr, err := net.ResolveIPAddr("ip", s.DSTDOMAIN)
-		if err != nil {
-			return nil, err
-		}
-		s.DSTADDR = ipAddr.IP
 		addrEnd = 5 + domainLen
 	case 4:
 		//	IP V6 address: X'04'

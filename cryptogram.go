@@ -53,18 +53,20 @@ func (s *DefaultAuth) EncodeWrite(c io.ReadWriter, b []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return c.Write(b)
+	n, err := c.Write(b)
+	if err == nil && n != len(b) {
+		err = io.ErrShortWrite
+	}
+	return n, err
 }
 
 func (s *DefaultAuth) DecodeRead(c io.ReadWriter, b []byte) (int, error) {
 	// 解码
 	n, err := c.Read(b)
-	if err != nil {
-		return 0, err
-	}
-	err = s.Decrypt(b)
-	if err != nil {
-		return 0, err
+	if n > 0 {
+		if decodeErr := s.Decrypt(b[:n]); decodeErr != nil {
+			return 0, decodeErr
+		}
 	}
 	return n, err
 }

@@ -13,7 +13,7 @@
 
 项目同时支持两种运行模式：
 
-- `proxy`：原有 HTTP/SOCKS5 应用代理，继续支持 `simple` / `random` 简易加密（流量混淆）。
+- `proxy`：HTTP/SOCKS5 TCP 应用代理，支持 HTTP 转发、HTTPS CONNECT 和 `simple` / `random` 流量混淆。
 - `tunnel`：Linux/macOS/Windows 全局 IPv4 TUN，以及 Android VpnService / iOS Packet Tunnel 原生客户端，默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）或显式无加密 TCP（`-transport tcp-plain`），支持 `none` / `simple` / `random` 混淆。
 
 ## 客户端平台
@@ -34,6 +34,8 @@
 - 全局隧道默认 `quic`，以及可选的 `tcp`，使用 TLS 1.3；不会自动降级为明文。`tcp-plain` 不提供 IP 包机密性或完整性，即使使用 `random` 也是如此。
 - 两个 TCP 后端使用新鲜随机挑战和 HMAC 认证，线路上传输认证证明，不直接发送令牌或摘要。摘要本身等价于 TCP 认证凭据，应保密；明文模式仍可被监听、篡改或中继，应使用独立测试令牌。
 - 不要把 `simple` / `random` 当作 TLS、SSH、WireGuard 或 AEAD 安全通道的替代品。
+- `proxy` 密码最终只影响至多 256 张替换表，长密码不能提升其密码学强度。本地监听无用户认证，默认只绑定 `127.0.0.1:8888`；服务端没有目标地址 ACL，部署时应限制访问来源和出口。
+- TLS 隧道保护客户端至服务端这一段；服务端仍可看到解封装的流量。目标站点的数据保护依赖 HTTPS 等端到端协议。完整边界见[安全与威胁模型](./docs/security.md)。
 
 
 文件结构
@@ -56,45 +58,51 @@ apps/ios/          `iOS 原生应用与 Packet Tunnel 扩展`
 - [全局加密隧道部署](./docs/tunnel.md)
 - [软件下载及版本说明](./docs/release.md)
 - [Android / iOS 构建与使用](./docs/mobile-clients.md)
+- [应用代理与同机部署](./docs/proxy.md)
+- [安全与威胁模型](./docs/security.md)
+- [连接、资源与网络排障](./docs/troubleshooting.md)
 
 #### 使用说明
 
-以下参数说明为兼容保留的 `proxy` 模式。macOS/Windows 全局隧道请参阅[全局加密隧道部署](./docs/tunnel.md)。
+从 [GitHub Releases](https://github.com/shikanon/socks5proxy/releases) 下载对应系统/架构的产物并[校验 SHA256SUMS](./docs/release.md)。Release 可能落后于源码；下面也提供从仓库根目录运行的方式（Go 版本见 `go.mod`）。
 
-**服务端**
-在服务器端中启动路径，打开。/cmd/server/，运行`go run main.go`
-服务端命令参数有三个：
-```
-  -local string #设置服务器对外端口
-    	Input server listen address(Default 8888): (default ":18888")
-  -passwd string #设置服务器对外密码
-    	Input server proxy password: (default "123456")
-  -type string #设置流量混淆类型
-    	Input traffic obfuscation type (simple/random, not secure encryption): (default "random")
+客户端和服务端可以在同一台机器运行，使用两个不同端口。分别在两个终端执行：
+
+```bash
+# 终端 1：服务端
+go run ./cmd/server -mode proxy -local 127.0.0.1:18888 -type random -passwd demo-only
+# 终端 2：客户端
+go run ./cmd/client -mode proxy -local 127.0.0.1:8888 \
+  -server 127.0.0.1:18888 -type random -passwd demo-only -recv http
 ```
 
-**客户端**
-在客户端中启动路径，打开。/cmd/client/，运行`go run main.go`
-服务端命令参数有四个：
+```bash
+curl --noproxy "" --proxy http://127.0.0.1:8888 https://example.com/
 ```
-  -local string #设置客户端的本地转发端口
-        Input server listen address(Default 8888): (default ":8888")
-  -passwd string #设置服务器的密码
-        Input server proxy password: (default "123456")
-  -server string #设置服务器ip地址和端口
-        Input server listen address, for example: 16.158.6.16:18181
-  -type string #设置流量混淆类型
-    	Input traffic obfuscation type (simple/random, not secure encryption): (default "random")
-  -recv string #设置上游协议模式
-    	Upstream protocol mode: http or socks5 (default http)
-```
+
+浏览器设置 HTTP/HTTPS 代理为 `127.0.0.1:8888`。若客户端改为 `-recv socks5`，浏览器也必须选择 SOCKS5，curl 使用 `--proxy socks5h://127.0.0.1:8888`。代理目标不能指回这两个监听端口。跨机器部署时，客户端的 `-server` 改为服务端地址；完整说明见[应用代理部署](./docs/proxy.md)。
+
+`-passwd` **没有默认值，必须显式设置**；`-type` 默认 `random`，两端必须相同。客户端 `-recv` 默认 `http`。应用代理只处理主动配置代理的应用；全局 IPv4 流量请使用[隧道模式](./docs/tunnel.md)。
+
+两端 proxy 模式均支持以下资源参数：
+
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `-max-connections` | `256` | 每个进程的最大活动会话数，额外连接留在系统监听队列 |
+| `-dial-timeout` | `10s` | 上游/目标连接及 DNS 的超时 |
+| `-handshake-timeout` | `10s` | 从接收连接到完成协议协商的总预算 |
+| `-idle-timeout` | `5m` | 双向均无流量时回收连接 |
+
+握手总预算包含连接时间；这些参数为 `0` 时使用默认值，负数无效。每会话约占用两个 FD，低 `ulimit -n` 环境应下调并发上限，详见[资源排障](./docs/troubleshooting.md)。`Ctrl+C` 会关闭监听及活动会话并等待退出。
 
 ## TODO
 
 - [x] 明确 `simple` / `random` 仅用于流量混淆，不作为安全加密承诺（[#23](https://github.com/shikanon/socks5proxy/issues/23)）
 - [x] 迁移 CI 到 GitHub Actions，并补齐格式化 / 测试 / vet / staticcheck（[#25](https://github.com/shikanon/socks5proxy/issues/25)）
 - [x] 将发布物迁移到 GitHub Releases，并提供 `SHA256SUMS`（[#28](https://github.com/shikanon/socks5proxy/issues/28)）
-- [ ] 补充 README 的安全声明与威胁模型说明（[#29](https://github.com/shikanon/socks5proxy/issues/29)）
-- [ ] 说明客户端与服务端同机部署的使用方式（[#2](https://github.com/shikanon/socks5proxy/issues/2)）
-- [ ] 排查并缓解 `socket: too many open files` 问题（[#3](https://github.com/shikanon/socks5proxy/issues/3)）
-- [ ] 更新下载与使用说明，覆盖最新发布方式与问题排查入口（[#4](https://github.com/shikanon/socks5proxy/issues/4)）
+- [x] 补充 README 的安全声明与威胁模型说明（[#29](https://github.com/shikanon/socks5proxy/issues/29)）
+- [x] 说明客户端与服务端同机部署的使用方式（[#2](https://github.com/shikanon/socks5proxy/issues/2)）
+- [x] 排查并缓解 `socket: too many open files` 问题（[#3](https://github.com/shikanon/socks5proxy/issues/3)）
+- [x] 更新下载与使用说明，覆盖最新发布方式与问题排查入口（[#4](https://github.com/shikanon/socks5proxy/issues/4)）
+
+实现细节、复现与验证结果见 [README TODO 验证记录](./docs/verification-readme-todos-2026-09-20.md)。
