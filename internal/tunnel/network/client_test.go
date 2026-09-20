@@ -100,7 +100,7 @@ func TestLinuxDNSLifecycle(t *testing.T) {
 		t.Run("failure="+failOn, func(t *testing.T) {
 			runner := &responseRunner{
 				responses: []string{"default via 192.168.1.1 dev eth0\n", "", "nameserver 127.0.0.53\n"},
-				failOn: failOn,
+				failOn:    failOn,
 			}
 			manager, err := NewClientManager(clientTestOptions(t.TempDir()), runner)
 			if err != nil {
@@ -162,7 +162,7 @@ func TestLinuxDNSPreflightAndOptOut(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			runner := &responseRunner{
 				responses: []string{"default via 192.168.1.1 dev eth0\n", "", test.conf},
-				failOn: test.fail,
+				failOn:    test.fail,
 			}
 			options := clientTestOptions(t.TempDir())
 			options.SkipLinuxDNS = test.skip

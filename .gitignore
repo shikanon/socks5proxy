@@ -10,3 +10,18 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+
+# Generated desktop/mobile outputs and local toolchains
+/dist/
+/.mobile-tools/
+*.aar
+*.apk
+*.xcframework/
+apps/android/.gradle/
+apps/android/local.properties
+apps/android/app/libs/
+apps/android/**/build/
+apps/ios/*.xcodeproj/
+apps/ios/PacketTunnel/Info.plist
+**/xcuserdata/
+.DS_Store

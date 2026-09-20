@@ -240,7 +240,7 @@ func (m *ClientManager) planLinux(ctx context.Context) ([]Command, []Command, er
 	}
 	if !m.options.SkipLinuxDNS {
 		if _, err := m.runner.Run(ctx, "resolvectl", "status"); err != nil {
-			return nil, nil, fmt.Errorf("Linux tunnel DNS requires systemd-resolved; use -linux-dns=false only with externally managed tunnel DNS: %w", err)
+			return nil, nil, fmt.Errorf("tunnel DNS on Linux requires systemd-resolved; use -linux-dns=false only with externally managed tunnel DNS: %w", err)
 		}
 		resolvConf, err := m.runner.Run(ctx, "cat", "/etc/resolv.conf")
 		if err != nil {
@@ -253,7 +253,7 @@ func (m *ClientManager) planLinux(ctx context.Context) ([]Command, []Command, er
 				continue
 			}
 			if fields[1] != "127.0.0.53" && fields[1] != "127.0.0.54" {
-				return nil, nil, errors.New("Linux tunnel DNS requires /etc/resolv.conf to use only the systemd-resolved stub; use -linux-dns=false only with externally managed tunnel DNS")
+				return nil, nil, errors.New("tunnel DNS on Linux requires /etc/resolv.conf to use only the systemd-resolved stub; use -linux-dns=false only with externally managed tunnel DNS")
 			}
 			stub = true
 		}

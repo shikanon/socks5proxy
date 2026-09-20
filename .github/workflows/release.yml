@@ -25,25 +25,7 @@ jobs:
           cache: true
 
       - name: Build release artifacts
-        run: |
-          mkdir -p dist
-          for arch in amd64 arm64; do
-            GOOS=darwin GOARCH="$arch" go build \
-              -trimpath -ldflags="-s -w" \
-              -o "dist/socks5proxy_client_darwin_${arch}" ./cmd/client
-          done
-          GOOS=linux GOARCH=amd64 go build \
-            -trimpath -ldflags="-s -w" \
-            -o dist/socks5proxy_client_linux_amd64 ./cmd/client
-          GOOS=linux GOARCH=amd64 go build \
-            -trimpath -ldflags="-s -w" \
-            -o dist/socks5proxy_server_linux_amd64 ./cmd/server
-          GOOS=windows GOARCH=amd64 go build \
-            -trimpath -ldflags="-s -w" \
-            -o dist/socks5proxy_client_windows_amd64.exe ./cmd/client
-          GOOS=windows GOARCH=amd64 go build \
-            -trimpath -ldflags="-s -w" \
-            -o dist/socks5proxy_server_windows_amd64.exe ./cmd/server
+        run: bash scripts/build-desktop.sh
 
       - name: Package Wintun for Windows tunnel mode
         run: |
@@ -54,17 +36,14 @@ jobs:
             '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51' \
             '/tmp/wintun-0.14.1.zip' | sha256sum -c -
           unzip -q /tmp/wintun-0.14.1.zip -d /tmp/wintun
-          mkdir -p /tmp/socks5proxy_client_windows_amd64
-          cp dist/socks5proxy_client_windows_amd64.exe \
-            /tmp/socks5proxy_client_windows_amd64/
-          cp /tmp/wintun/wintun/bin/amd64/wintun.dll \
-            /tmp/socks5proxy_client_windows_amd64/
-          cp /tmp/wintun/wintun/LICENSE.txt \
-            /tmp/socks5proxy_client_windows_amd64/WINTUN_LICENSE.txt
-          cd /tmp
-          zip -q -r \
-            "$GITHUB_WORKSPACE/dist/socks5proxy_client_windows_amd64.zip" \
-            socks5proxy_client_windows_amd64
+          for arch in amd64 arm64; do
+            package="socks5proxy_client_windows_${arch}"
+            mkdir -p "/tmp/$package"
+            cp "dist/$package.exe" "/tmp/$package/"
+            cp "/tmp/wintun/wintun/bin/$arch/wintun.dll" "/tmp/$package/"
+            cp /tmp/wintun/wintun/LICENSE.txt "/tmp/$package/WINTUN_LICENSE.txt"
+            (cd /tmp && zip -q -r "$GITHUB_WORKSPACE/dist/$package.zip" "$package")
+          done
 
       - name: Generate SHA256 checksums
         run: |

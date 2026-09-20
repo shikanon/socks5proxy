@@ -14,7 +14,19 @@
 项目同时支持两种运行模式：
 
 - `proxy`：原有 HTTP/SOCKS5 应用代理，继续支持 `simple` / `random` 简易加密（流量混淆）。
-- `tunnel`：Linux/macOS/Windows 全局 IPv4 TUN，默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）或显式无加密 TCP（`-transport tcp-plain`），支持 `none` / `simple` / `random` 混淆。
+- `tunnel`：Linux/macOS/Windows 全局 IPv4 TUN，以及 Android VpnService / iOS Packet Tunnel 原生客户端，默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）或显式无加密 TCP（`-transport tcp-plain`），支持 `none` / `simple` / `random` 混淆。
+
+## 客户端平台
+
+| 平台 | 架构 | 使用入口 |
+| --- | --- | --- |
+| Linux | amd64、arm64 | CLI，TUN 模式需要 root / 网络管理权限 |
+| Windows | amd64、arm64 | CLI，以管理员身份运行；使用包含对应 Wintun DLL 的 ZIP |
+| macOS | Intel、Apple Silicon | CLI，TUN 模式需要 sudo |
+| Android 8.0+ | arm64、armv7、x86_64 | 原生配置界面 + VpnService；构建 APK 后安装 |
+| iOS / iPadOS 15+ | arm64；模拟器 arm64、x86_64 | SwiftUI + NetworkExtension；真机需 Apple 签名 |
+
+桌面发布物由 Release workflow 构建；移动源码、AAR/XCFramework 和应用构建入口见[移动客户端文档](./docs/mobile-clients.md)。移动端目前提供全局 IPv4 隧道，尚无真机联网验收；IPv6 被阻断。应用签名和商店分发由使用者配置。
 
 ## 安全说明
 
@@ -33,6 +45,9 @@ client.go           `客户端实现`
 cmd/server/main.go  `服务端主启动程序`
 cmd/client/main.go  `客户端主启动程`
 internal/tunnel/    `全局加密隧道、TUN 和系统网络配置`
+mobile/            `可嵌入的 Go 隧道核心，gomobile 绑定接口`
+apps/android/      `Android 原生 VPN 应用`
+apps/ios/          `iOS 原生应用与 Packet Tunnel 扩展`
 ```
 
 
@@ -40,6 +55,7 @@ internal/tunnel/    `全局加密隧道、TUN 和系统网络配置`
 - [流量混淆算法介绍](./docs/cryptogram.md)
 - [全局加密隧道部署](./docs/tunnel.md)
 - [软件下载及版本说明](./docs/release.md)
+- [Android / iOS 构建与使用](./docs/mobile-clients.md)
 
 #### 使用说明
 

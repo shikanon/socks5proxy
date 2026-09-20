@@ -47,7 +47,7 @@ func tcpTLSConfig(cfg *tls.Config, client bool) (*tls.Config, error) {
 	return copy, nil
 }
 
-func dialTCP(ctx context.Context, addr string, cfg *tls.Config, secure bool) (Conn, error) {
+func dialTCPWithControl(ctx context.Context, addr string, cfg *tls.Config, secure bool, control SocketControl) (Conn, error) {
 	var err error
 	if secure {
 		cfg, err = tcpTLSConfig(cfg, true)
@@ -57,7 +57,7 @@ func dialTCP(ctx context.Context, addr string, cfg *tls.Config, secure bool) (Co
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	raw, err := (&net.Dialer{KeepAlive: keepAlivePeriod}).DialContext(dialCtx, "tcp", addr)
+	raw, err := (&net.Dialer{KeepAlive: keepAlivePeriod, Control: control}).DialContext(dialCtx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}

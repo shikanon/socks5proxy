@@ -12,7 +12,7 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     env:
-      CGO_ENABLED: "0"
+      CGO_ENABLED: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,8 +70,24 @@ jobs:
             goarch: amd64
             component: client
             extension: ".exe"
+          - goos: windows
+            goarch: arm64
+            component: client
+            extension: ".exe"
           - goos: linux
             goarch: amd64
+            component: client
+            extension: ""
+          - goos: linux
+            goarch: arm64
+            component: client
+            extension: ""
+          - goos: linux
+            goarch: amd64
+            component: server
+            extension: ""
+          - goos: linux
+            goarch: arm64
             component: server
             extension: ""
     steps:
