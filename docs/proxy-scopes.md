@@ -37,6 +37,10 @@ sudo ./socks5proxy_client_darwin_arm64 \
 
 默认 IPv4 模式仍保留 macOS/Windows 和移动端的 IPv6 阻断策略，Linux 需自行限制 IPv6。停止客户端会恢复管理的路由、DNS 和相关状态。现有系统更具体路由及其他 VPN 可能影响结果，详见[网络排障](troubleshooting.md)。不要同时把本项目 proxy 配置在同一个 TUN 出口上。
 
+桌面 TUN 默认开启断线自动回退：`-disconnect-policy direct -fallback-timeout 10s -health-interval 2s -reconnect-interval 5s`。通过隧道 DNS 探测实际转发路径，超时后撤销 TUN 路由、DNS 和程序添加的 IPv6 阻断规则，普通流量恢复原来的出口；心跳正常但转发故障也会回退。远端认证及转发探测恢复后自动重新启用隧道。添加 `-daemon` 可以在客户端崩溃后由独立进程恢复网络并重启。超时语义与开机启动见[守护进程说明](watchdog.md)。
+
+若开发过程中需要 AI coding 始终通过自己的网络出口，可只在目标应用配置本地 HTTP/SOCKS5 代理，或者使用下面的网站规则，保留开发工具所用域名直连。当前 TUN 不提供按进程选择代理；自动回退能恢复断线后的新连接，已中断的会话仍需应用重试。`proxy` / PAC 远程失败的行为保持下文所述，不会由 TUN 守护进程改写系统代理设置。
+
 ## 指定网站与通配符
 
 跨机器部署先启动应用代理服务端：

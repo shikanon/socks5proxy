@@ -72,4 +72,23 @@ python3 scripts/test-proxy-resources.py \
 - IPv4 通、IPv6 不通：确认两端 `-ipv6` 和实际协商地址。服务端运行 `ip -6 route show default`、`ip -6 addr show dev eth0`、`sysctl net.ipv6.conf.all.forwarding`、`ip6tables -S FORWARD`、`ip6tables -t nat -S POSTROUTING`；将 `eth0` 换为真实出口。没有 IPv6 出口时不能访问公网 IPv6；使用外部路由前缀时还需检查回程路由。
 - `IPv6 requires MTU at least 1280`：删去旧配置的 `-mtu 1150`，或设置 `-mtu 1280`；双栈支持 1280–1400。IPv6 UDP 大于 MTU 需要发送端源分片或调整应用报文大小，路由器不会替 IPv6 分片。
 - IPv6 外层端点连接失败：`-server` 使用 `[IPv6地址]:端口`，检查物理 IPv6 默认路由及端点 `/128` 绕行路由；TLS 名称/IP SAN 必须匹配。`-ipv6` 控制内层地址族，不会自动为物理网络提供 IPv6。
-- 异常退出后路由/DNS 残留：使用同一 `-state-dir` 重启触发恢复，详见[隧道停止与恢复](tunnel.md#停止与恢复)。双栈与 kill switch 限制见[安全模型](security.md)。
+- 异常退出后路由/DNS 残留：先停止系统服务或手动客户端，以同一 `-state-dir` / `-config` 执行 `-recover-network`，或重启触发恢复。`-daemon` 会在子进程死亡后主动恢复；双栈与 kill switch 限制见[安全模型](security.md)。
+
+## 自动直连与守护进程
+
+先执行客户端 `-config /绝对路径/client.json -status`，查看 `mode`、`running`、`updated` 和 `last_error`。需要与服务启动时使用相同配置或状态目录，并有权限访问该目录。
+
+| 状态或症状 | 含义与处理 |
+| --- | --- |
+| `direct`，远端连接失败 | TUN 未启用或已恢复，连接失败后默认等待 5 秒重试；检查远程端口、令牌和证书 |
+| `reconnecting` | 短暂断线，原隧道路由仍保留；默认 `direct` 策略到期限后开始恢复 |
+| `restoring` | 正在执行路由、DNS、IPv6 状态恢复；系统命令有额外执行时间 |
+| `error` | 恢复或启用失败，检查 `last_error` 和日志；未完成步骤仍保存在 `network-state.json`，不要删除该文件来掩盖失败 |
+| `tunnel` 但 `running=false` | 这是最后保存的状态；进程已退出，使用守护服务或 `-recover-network` 清理 |
+| `client/daemon already running` | 同一状态目录已被占用；先停掉现有实例，避免两套进程管理同一路由 |
+| 静默丢包后超过 10 秒才恢复 | 检查 `fallback_timeout`、是否显式选择 `block`、是否在 `restoring/error`；10 秒是开始恢复的期限，系统命令还需执行时间 |
+| 心跳正常却持续 `direct` | 检查服务端 TUN、转发/NAT 和隧道 DNS；`health_dns_name` 需有 A 记录，双栈还需 AAAA。DNS 空答案、SERVFAIL 或任一地址族超时都不会重新接管流量 |
+| 已显示 `direct`，应用仍不能联网 | 确认原物理网络本身可用；让应用重试旧连接，并检查是否仍配置独立的 HTTP/SOCKS5/PAC 或其他 VPN |
+| 系统服务安装报权限错误 | Unix 使用 root 管理的目录；二进制 755、配置/凭据 600，父目录不可被普通账户改写。Windows 使用管理员终端并放好匹配架构的 Wintun DLL |
+
+macOS 日志位于 `/var/log/socks5proxy-client.log`；Linux 使用 `journalctl -u socks5proxy-client.service`；Windows 查看计划任务状态，调试时可在管理员终端前台运行同一配置。完整安装、停止、卸载和恢复命令见[守护进程部署](watchdog.md)。

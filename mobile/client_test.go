@@ -317,7 +317,18 @@ func TestClientPacketRoundTrip(t *testing.T) {
 				case <-ctx.Done():
 					t.Fatal("no inbound packet")
 				}
-				if p.calls.Load() != 1 || c.sent.Load() != 20 || c.received.Load() != 20 || c.dropped.Load() != 2 {
+				// The peer can read a TCP packet before the sender's write
+				// returns and updates statistics. Wait for both workers.
+				ticker := time.NewTicker(10 * time.Millisecond)
+				defer ticker.Stop()
+				for c.sent.Load() != 20 || c.received.Load() != 20 {
+					select {
+					case <-ticker.C:
+					case <-ctx.Done():
+						t.Fatal("packet statistics did not complete", c.Status())
+					}
+				}
+				if p.calls.Load() != 1 || c.dropped.Load() != 2 {
 					t.Fatal("protect/statistics mismatch", c.Status(), p.calls.Load())
 				}
 			})

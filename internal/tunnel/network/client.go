@@ -256,9 +256,9 @@ func (m *ClientManager) planWindows(ctx context.Context) ([]Command, []Command, 
 			return nil, nil, errors.New("could not read Windows TUN MTU")
 		}
 	}
-	restorePhysicalDNS := fmt.Sprintf("Set-DnsClientServerAddress -InterfaceIndex %d -ResetServerAddresses -ErrorAction SilentlyContinue", route.InterfaceIndex)
+	restorePhysicalDNS := fmt.Sprintf("Set-DnsClientServerAddress -InterfaceIndex %d -ResetServerAddresses -ErrorAction Stop", route.InterfaceIndex)
 	if len(route.DNS) > 0 {
-		restorePhysicalDNS = fmt.Sprintf("Set-DnsClientServerAddress -InterfaceIndex %d -ServerAddresses %s -ErrorAction SilentlyContinue", route.InterfaceIndex, psArray(route.DNS))
+		restorePhysicalDNS = fmt.Sprintf("Set-DnsClientServerAddress -InterfaceIndex %d -ServerAddresses %s -ErrorAction Stop", route.InterfaceIndex, psArray(route.DNS))
 	}
 	forwardScripts := []string{
 		fmt.Sprintf("New-NetIPAddress -InterfaceAlias %s -IPAddress %s -PrefixLength 32 -PolicyStore ActiveStore -ErrorAction Stop", tunName, psQuote(m.options.ClientIP.String())),
@@ -270,13 +270,13 @@ func (m *ClientManager) planWindows(ctx context.Context) ([]Command, []Command, 
 		fmt.Sprintf("New-NetFirewallRule -DisplayName %s -Direction Outbound -Action Block -RemoteAddress %s -ErrorAction Stop", blockName, psArray(ipv6BlockRanges(m.options.ServerIP))),
 	}
 	undoScripts := []string{
-		fmt.Sprintf("Remove-NetIPAddress -InterfaceAlias %s -IPAddress %s -Confirm:$false -ErrorAction SilentlyContinue", tunName, psQuote(m.options.ClientIP.String())),
-		fmt.Sprintf("Remove-NetRoute -DestinationPrefix %s -InterfaceIndex %d -Confirm:$false -ErrorAction SilentlyContinue", psQuote(hostPrefix), route.InterfaceIndex),
-		fmt.Sprintf("Remove-NetRoute -DestinationPrefix '0.0.0.0/1' -InterfaceAlias %s -Confirm:$false -ErrorAction SilentlyContinue", tunName),
-		fmt.Sprintf("Remove-NetRoute -DestinationPrefix '128.0.0.0/1' -InterfaceAlias %s -Confirm:$false -ErrorAction SilentlyContinue", tunName),
-		fmt.Sprintf("Set-DnsClientServerAddress -InterfaceAlias %s -ResetServerAddresses -ErrorAction SilentlyContinue", tunName),
+		fmt.Sprintf("Get-NetIPAddress -ErrorAction Stop | Where-Object { $_.InterfaceAlias -eq %s -and $_.IPAddress -eq %s } | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop", tunName, psQuote(m.options.ClientIP.String())),
+		fmt.Sprintf("Get-NetRoute -ErrorAction Stop | Where-Object { $_.DestinationPrefix -eq %s -and $_.InterfaceIndex -eq %d } | Remove-NetRoute -Confirm:$false -ErrorAction Stop", psQuote(hostPrefix), route.InterfaceIndex),
+		fmt.Sprintf("Get-NetRoute -ErrorAction Stop | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/1' -and $_.InterfaceAlias -eq %s } | Remove-NetRoute -Confirm:$false -ErrorAction Stop", tunName),
+		fmt.Sprintf("Get-NetRoute -ErrorAction Stop | Where-Object { $_.DestinationPrefix -eq '128.0.0.0/1' -and $_.InterfaceAlias -eq %s } | Remove-NetRoute -Confirm:$false -ErrorAction Stop", tunName),
+		fmt.Sprintf("if (Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object { $_.Name -eq %s }) { Set-DnsClientServerAddress -InterfaceAlias %s -ResetServerAddresses -ErrorAction Stop }", tunName, tunName),
 		restorePhysicalDNS,
-		fmt.Sprintf("Remove-NetFirewallRule -DisplayName %s -ErrorAction SilentlyContinue", blockName),
+		fmt.Sprintf("Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.DisplayName -eq %s } | Remove-NetFirewallRule -ErrorAction Stop", blockName),
 	}
 	if m.options.ClientIPv6.IsValid() {
 		forwardScripts, undoScripts = forwardScripts[:6], undoScripts[:6]
@@ -288,12 +288,15 @@ func (m *ClientManager) planWindows(ctx context.Context) ([]Command, []Command, 
 			fmt.Sprintf("Set-NetIPInterface -InterfaceAlias %s -AddressFamily IPv4 -NlMtuBytes %d -ErrorAction Stop", tunName, m.options.MTU),
 		)
 		undoScripts = append(undoScripts,
-			fmt.Sprintf("Remove-NetIPAddress -InterfaceAlias %s -IPAddress %s -Confirm:$false -ErrorAction SilentlyContinue", tunName, psQuote(m.options.ClientIPv6.String())),
-			fmt.Sprintf("Remove-NetRoute -DestinationPrefix '::/1' -InterfaceAlias %s -Confirm:$false -ErrorAction SilentlyContinue", tunName),
-			fmt.Sprintf("Remove-NetRoute -DestinationPrefix '8000::/1' -InterfaceAlias %s -Confirm:$false -ErrorAction SilentlyContinue", tunName),
-			fmt.Sprintf("Set-NetIPInterface -InterfaceAlias %s -AddressFamily IPv6 -NlMtuBytes %d -ErrorAction SilentlyContinue", tunName, oldMTU.IPv6),
-			fmt.Sprintf("Set-NetIPInterface -InterfaceAlias %s -AddressFamily IPv4 -NlMtuBytes %d -ErrorAction SilentlyContinue", tunName, oldMTU.IPv4),
+			fmt.Sprintf("Get-NetIPAddress -ErrorAction Stop | Where-Object { $_.InterfaceAlias -eq %s -and $_.IPAddress -eq %s } | Remove-NetIPAddress -Confirm:$false -ErrorAction Stop", tunName, psQuote(m.options.ClientIPv6.String())),
+			fmt.Sprintf("Get-NetRoute -ErrorAction Stop | Where-Object { $_.DestinationPrefix -eq '::/1' -and $_.InterfaceAlias -eq %s } | Remove-NetRoute -Confirm:$false -ErrorAction Stop", tunName),
+			fmt.Sprintf("Get-NetRoute -ErrorAction Stop | Where-Object { $_.DestinationPrefix -eq '8000::/1' -and $_.InterfaceAlias -eq %s } | Remove-NetRoute -Confirm:$false -ErrorAction Stop", tunName),
+			fmt.Sprintf("if (Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object { $_.Name -eq %s }) { Set-NetIPInterface -InterfaceAlias %s -AddressFamily IPv6 -NlMtuBytes %d -ErrorAction Stop }", tunName, tunName, oldMTU.IPv6),
+			fmt.Sprintf("if (Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object { $_.Name -eq %s }) { Set-NetIPInterface -InterfaceAlias %s -AddressFamily IPv4 -NlMtuBytes %d -ErrorAction Stop }", tunName, tunName, oldMTU.IPv4),
 		)
+	}
+	for i, script := range undoScripts {
+		undoScripts[i] = "$ErrorActionPreference='Stop'; " + script
 	}
 	return powershellCommands(forwardScripts), powershellCommands(undoScripts), nil
 }
@@ -422,6 +425,13 @@ func defaultStateDir() string {
 	default:
 		return "/var/run/socks5proxy"
 	}
+}
+
+func StateDir(value string) string {
+	if value == "" {
+		return defaultStateDir()
+	}
+	return value
 }
 
 func fieldValue(output, key string) string {

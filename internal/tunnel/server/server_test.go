@@ -72,7 +72,7 @@ func TestServerTransportSessions(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					request := protocol.Message{Type: protocol.TypeAuthRequest, Version: protocol.Version, ClientID: "desktop", Token: token, Obfs: obfs}
+					request := protocol.Message{Type: protocol.TypeAuthRequest, Version: protocol.Version, ClientID: "desktop", Token: token, Obfs: obfs, Heartbeat: true}
 					challenge := ""
 					obfsKey := token
 					if kind != "quic" {
@@ -103,6 +103,22 @@ func TestServerTransportSessions(t *testing.T) {
 					return c, response, cipher
 				}
 				checkPacket := func(c transport.Conn, response protocol.Message, cipher protocol.Cipher) *session {
+					if !response.Heartbeat {
+						t.Fatal("heartbeat capability not negotiated")
+					}
+					if err := c.SendDatagram(protocol.Heartbeat(protocol.DatagramTypePing, 42)); err != nil {
+						t.Fatal(err)
+					}
+					pong, err := c.ReceiveDatagram(ctx)
+					kind, nonce, ok := protocol.ParseHeartbeat(pong)
+					if err != nil || !ok || kind != protocol.DatagramTypePong || nonce != 42 {
+						t.Fatal("invalid pong", err)
+					}
+					select {
+					case <-dev.packets:
+						t.Fatal("heartbeat reached TUN")
+					default:
+					}
 					packet := make([]byte, 20)
 					packet[0], packet[3] = 0x45, 20
 					source := netip.MustParseAddr(response.ClientIPv4).As4()

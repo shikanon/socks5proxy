@@ -82,6 +82,11 @@ func TestWindowsPlanPreservesPhysicalDNS(t *testing.T) {
 	if got := strings.Join(undo[5].Args, " "); !strings.Contains(got, "@('192.168.1.1','9.9.9.9')") {
 		t.Fatalf("physical DNS restore is incorrect: %s", got)
 	}
+	for _, c := range undo {
+		if strings.Contains(strings.Join(c.Args, " "), "SilentlyContinue") {
+			t.Fatal("restore must report permission/DNS errors")
+		}
+	}
 }
 
 func TestClientManagerRejectsUnsafeInterfaceName(t *testing.T) {

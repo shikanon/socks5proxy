@@ -33,6 +33,9 @@ jobs:
       - name: Run tests
         run: go test -race -timeout 60s ./...
 
+      - name: Check daemon service definitions
+        run: python3 scripts/test-client-daemon.py
+
       - name: Check proxy resource recovery with low FD limit
         run: |
           go build -o /tmp/socks5proxy-client ./cmd/client
@@ -92,6 +95,25 @@ jobs:
             TUNNEL_TRANSPORT=${{ matrix.transport }} \
             TUNNEL_ENDPOINT_IPV6=${{ matrix.endpoint_ipv6 }} \
             ./scripts/test-tunnel-linux.sh
+
+  tunnel-watchdog:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        transport: [quic, tcp, tcp-table]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check forwarding failure, direct fallback and supervised crash recovery
+        run: |
+          sudo env "PATH=$PATH" TUNNEL_IPV6=true TUNNEL_WATCHDOG=true \
+            TUNNEL_TRANSPORT=${{ matrix.transport }} ./scripts/test-tunnel-linux.sh
 
   cross-build:
     runs-on: ubuntu-latest

@@ -14,7 +14,7 @@
 项目同时支持两种运行模式：
 
 - `proxy`：HTTP/SOCKS5 TCP 应用代理，支持 HTTP 转发、HTTPS CONNECT、全代理/网站规则分流（`*`、`?` 通配符）、PAC，以及 `simple` / `random` 流量混淆。
-- `tunnel`：Linux/macOS/Windows 全局 TUN，以及 Android VpnService / iOS Packet Tunnel 原生客户端。默认 IPv4，两端添加 `-ipv6` 可启用 IPv4 + IPv6 双栈，覆盖 TCP、UDP、ICMP 和 DNS。默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）、显式无加密 TCP（`-transport tcp-plain`），或无需 TLS 的每日令牌替换表（`-transport tcp-table`）。后者使用服务端自动生成的 8–16 位随机令牌表与 UTC 当日时间戳，详见[令牌表隧道](./docs/token-table.md)。
+- `tunnel`：Linux/macOS/Windows 全局 TUN，以及 Android VpnService / iOS Packet Tunnel 原生客户端。默认 IPv4，两端添加 `-ipv6` 可启用 IPv4 + IPv6 双栈，覆盖 TCP、UDP、ICMP 和 DNS。桌面客户端默认在远端失联超时后恢复普通直连，支持独立守护进程和开机启动，见[自动回退与守护进程](./docs/watchdog.md)。默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）、显式无加密 TCP（`-transport tcp-plain`），或无需 TLS 的每日令牌替换表（`-transport tcp-table`）。后者使用服务端自动生成的 8–16 位随机令牌表与 UTC 当日时间戳，详见[令牌表隧道](./docs/token-table.md)。
 
 ## 客户端平台
 
@@ -57,6 +57,7 @@ apps/ios/          `iOS 原生应用与 Packet Tunnel 扩展`
 - [SOCKS5协议介绍](./docs/socks5.md)
 - [流量混淆算法介绍](./docs/cryptogram.md)
 - [全局加密隧道部署](./docs/tunnel.md)
+- [断线自动直连、守护进程与开机启动](./docs/watchdog.md)
 - [无需 TLS 的每日令牌表与 TUN 隧道](./docs/token-table.md)
 - [软件下载及版本说明](./docs/release.md)
 - [Android / iOS 构建与使用](./docs/mobile-clients.md)
@@ -86,6 +87,8 @@ curl --noproxy "" --proxy http://127.0.0.1:8888 https://example.com/
 浏览器设置 HTTP/HTTPS 代理为 `127.0.0.1:8888`。若客户端改为 `-recv socks5`，浏览器也必须选择 SOCKS5，curl 使用 `--proxy socks5h://127.0.0.1:8888`。代理目标不能指回这两个监听端口。跨机器部署时，客户端的 `-server` 改为服务端地址；完整说明见[应用代理部署](./docs/proxy.md)。
 
 `-passwd` **没有默认值，必须显式设置**；`-type` 默认 `random`，两端必须相同。客户端 `-recv` 默认 `http`。应用代理只处理主动配置代理的应用；全局 IPv4/IPv6 流量请使用[隧道模式](./docs/tunnel.md)，双栈需两端启用 `-ipv6`，服务端出口具备 IPv6 路由。
+
+桌面隧道默认 `-disconnect-policy direct`：每 2 秒通过隧道查询 DNS，验证实际转发路径，并在服务端支持时检查远端心跳。连续 10 秒没有有效转发响应时，即使心跳正常，也开始撤销隧道路由、DNS 和程序设置的 IPv6 阻断规则，关闭 TUN，恢复系统原来的普通流量。直连期间每次连接失败后等待 5 秒再重试，认证和转发检查成功后重新启用隧道。`-daemon` 增加独立父进程，在客户端崩溃后恢复网络并重启；安装为系统后台服务和配置文件示例见[守护进程说明](./docs/watchdog.md)。需要断线期间保留隧道路由时显式使用 `-disconnect-policy block`。
 
 只让指定网站走远程代理，其余直连：
 

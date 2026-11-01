@@ -30,7 +30,11 @@ def udp_socket(port):
 
 
 def dns_response(query):
-    return query[:2] + b"\x81\x80" + query[4:6] + b"\x00" * 6 + query[12:]
+    answer = (
+        b"\xc0\x0c" + query[-4:] + struct.pack("!IH", 60, 16)
+        + socket.inet_pton(socket.AF_INET6, TARGET)
+    )
+    return query[:2] + b"\x81\x80" + query[4:6] + b"\x00\x01" + b"\x00" * 4 + query[12:] + answer
 
 
 def serve_udp(sock, dns=False):

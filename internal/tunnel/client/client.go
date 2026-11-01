@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand/v2"
 	"net"
 	"net/netip"
 	"os"
@@ -37,9 +36,20 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
+	lock, err := tunnelnet.AcquireLock(config.StateDir, "client")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	// Recover even when credentials have subsequently become invalid.
+	restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	err = tunnelnet.RecoverClientState(restoreCtx, config.StateDir, nil)
+	restoreCancel()
+	if err != nil {
+		return fmt.Errorf("recover previous network state: %w", err)
+	}
 	var table *keytable.Table
 	var token string
-	var err error
 	if config.Transport == "tcp-table" {
 		table, err = keytable.Load(config.TableFile)
 	} else {
@@ -51,19 +61,16 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := tunnelnet.RecoverClientState(ctx, config.StateDir, nil); err != nil {
-		return fmt.Errorf("recover previous network state: %w", err)
-	}
 	obfs, err := tunnel.NormalizeObfs(config.Obfs)
 	if err != nil {
 		return err
 	}
-	serverIP, serverName, err := resolveServer(ctx, config.ServerAddr, config.ServerName)
-	if err != nil {
-		return err
+	host, _, _ := net.SplitHostPort(config.ServerAddr)
+	serverName := config.ServerName
+	if serverName == "" {
+		serverName = host
 	}
 	_, serverPort, _ := net.SplitHostPort(config.ServerAddr)
-	dialAddr := net.JoinHostPort(serverIP.String(), serverPort)
 	var tlsConfig *tls.Config
 	if config.Transport != "tcp-plain" && config.Transport != "tcp-table" {
 		tlsConfig, err = transport.ClientTLS(config.CAFile, serverName)
@@ -76,136 +83,140 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 		log.Print("tcp-table uses a learning-only daily substitution table; no TLS or packet integrity")
 	}
 
-	var (
-		tunDevice      device.Device
-		networkManager *tunnelnet.ClientManager
-		networkApplied bool
-		stats          counters
-		outbound       chan []byte
-		activeResponse protocol.Message
-	)
-	defer func() {
-		if networkApplied && networkManager != nil {
-			restoreCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := networkManager.Restore(restoreCtx); err != nil {
-				log.Printf("tunnel client network restore failed: %v", err)
+	var endpoint netip.Addr
+	lastMode := ""
+	return runWatchdog(ctx, config, watchdogHooks{
+		connect: func(ctx context.Context, retained bool) (*connection, error) {
+			if !retained || !endpoint.IsValid() {
+				var err error
+				endpoint, _, err = resolveServer(ctx, config.ServerAddr, config.ServerName)
+				if err != nil {
+					return nil, err
+				}
 			}
-		}
-		if tunDevice != nil {
-			_ = tunDevice.Close()
-		}
-	}()
-
-	backoff := time.Second
-	for {
-		if ctx.Err() != nil {
-			return nil
-		}
-		var conn transport.Conn
-		var response protocol.Message
-		var cipher protocol.Cipher
-		if table != nil {
-			conn, response, cipher, err = session.ConnectTable(ctx, dialAddr, config.ClientID, table, nil, session.Options{IPv6: config.IPv6})
-		} else {
-			conn, response, cipher, err = connect(ctx, dialAddr, config.ClientID, token, obfs, tlsConfig, config.Transport, session.Options{IPv6: config.IPv6})
-		}
-		if err != nil {
-			if !networkApplied {
-				return err
+			dialAddr := net.JoinHostPort(endpoint.String(), serverPort)
+			var c transport.Conn
+			var response protocol.Message
+			var cipher protocol.Cipher
+			var err error
+			opt := session.Options{IPv6: config.IPv6, Heartbeat: true}
+			if table != nil {
+				c, response, cipher, err = session.ConnectTable(ctx, dialAddr, config.ClientID, table, nil, opt)
+			} else {
+				c, response, cipher, err = connect(ctx, dialAddr, config.ClientID, token, obfs, tlsConfig, config.Transport, opt)
 			}
-			log.Printf("tunnel reconnect failed: %v", err)
-			if err := waitBackoff(ctx, backoff); err != nil {
-				return nil
-			}
-			if backoff < 30*time.Second {
-				backoff *= 2
-			}
-			continue
-		}
-
-		if !networkApplied {
-			client6, peer6, dns6, err := protocol.ValidateIPv6Parameters(response, config.IPv6)
 			if err != nil {
-				_ = conn.CloseWithError(4, "invalid IPv6 parameters")
-				return err
+				return nil, err
+			}
+			if !response.Heartbeat {
+				log.Print("server lacks heartbeat support; health checks use the IP forwarding path")
+			}
+			healthResponse := response
+			if config.DNS != "" {
+				healthResponse.DNSIPv4 = config.DNS
 			}
 			if config.DNSIPv6 != "" {
-				dns6, _ = netip.ParseAddr(config.DNSIPv6)
+				healthResponse.DNSIPv6 = config.DNSIPv6
 			}
-			clientIP, err := netip.ParseAddr(response.ClientIPv4)
-			if err != nil || !clientIP.Is4() {
-				_ = conn.CloseWithError(4, "invalid client address")
-				return errors.New("server returned an invalid client IPv4 address")
+			if err := probe(ctx, c, healthResponse, cipher, healthOptions{interval: config.HealthInterval,
+				timeout: config.FallbackTimeout, dnsName: config.HealthDNSName}); err != nil {
+				c.CloseWithError(0, "health probe failed")
+				return nil, err
 			}
-			peerIP, err := netip.ParseAddr(response.ServerIPv4)
-			if err != nil || !peerIP.Is4() {
-				_ = conn.CloseWithError(4, "invalid server address")
-				return errors.New("server returned an invalid tunnel peer address")
+			return &connection{conn: c, response: response, cipher: cipher, endpoint: endpoint}, nil
+		},
+		activate: func(ctx context.Context, c *connection) (managedTunnel, error) { return activate(ctx, config, c) },
+		recover:  func(ctx context.Context) error { return tunnelnet.RecoverClientState(ctx, config.StateDir, nil) },
+		status: func(mode string, err error) {
+			if mode != lastMode || err != nil {
+				log.Printf("tunnel watchdog mode=%s error=%v", mode, err)
 			}
-			dnsIP, err := netip.ParseAddr(response.DNSIPv4)
-			if config.DNS != "" {
-				dnsIP, err = netip.ParseAddr(config.DNS)
+			lastMode = mode
+			if e := tunnelnet.WriteStatus(config.StateDir, mode, err); e != nil {
+				log.Printf("write watchdog status: %v", e)
 			}
-			if err != nil || !dnsIP.Is4() {
-				_ = conn.CloseWithError(4, "invalid DNS address")
-				return errors.New("server returned an invalid DNS address")
-			}
-			if response.MTU < 576 || response.MTU > config.MTU {
-				_ = conn.CloseWithError(4, "invalid MTU")
-				return fmt.Errorf("server returned invalid MTU %d", response.MTU)
-			}
-			tunDevice, err = device.Create(config.TUNName, response.MTU)
-			if err != nil {
-				_ = conn.CloseWithError(5, "TUN creation failed")
-				return err
-			}
-			networkManager, err = tunnelnet.NewClientManager(tunnelnet.ClientOptions{
-				TUNName:        tunDevice.Name(),
-				ClientIP:       clientIP,
-				ServerIP:       serverIP,
-				TunnelPeer:     peerIP,
-				ClientIPv6:     client6,
-				TunnelPeerIPv6: peer6,
-				DNSIPv6:        dns6,
-				DNS:            dnsIP,
-				MTU:            response.MTU,
-				StateDir:       config.StateDir,
-				SkipLinuxDNS:   config.SkipLinuxDNS,
-			}, nil)
-			if err != nil {
-				_ = conn.CloseWithError(5, "network setup failed")
-				return err
-			}
-			if err := networkManager.Recover(ctx); err != nil {
-				_ = conn.CloseWithError(5, "network recovery failed")
-				return err
-			}
-			if err := networkManager.Apply(ctx); err != nil {
-				_ = conn.CloseWithError(5, "network setup failed")
-				return err
-			}
-			networkApplied = true
-			activeResponse = response
-			outbound = make(chan []byte, 256)
-			go readTUN(ctx, tunDevice, outbound, &stats)
-			log.Printf("global tunnel enabled interface=%s client_ip=%s server_ip=%s transport=%s obfs=%s", tunDevice.Name(), clientIP, serverIP, config.Transport, obfs)
-		} else if !sameTunnelParameters(activeResponse, response) {
-			_ = conn.CloseWithError(6, "tunnel parameters changed")
-			return errors.New("server changed tunnel parameters; network configuration was restored, restart the client")
-		}
+		},
+		now: time.Now, wait: waitBackoff,
+	})
+}
 
-		backoff = time.Second
-		err = relay(ctx, conn, tunDevice, outbound, response, cipher, &stats)
-		_ = conn.CloseWithError(0, "reconnecting")
-		if ctx.Err() != nil {
-			return nil
-		}
-		log.Printf("tunnel disconnected, traffic remains blocked pending reconnect: %v", err)
-		if err := waitBackoff(ctx, backoff); err != nil {
-			return nil
-		}
+type activeTunnel struct {
+	response  protocol.Message
+	dev       device.Device
+	manager   *tunnelnet.ClientManager
+	outbound  chan []byte
+	stats     counters
+	cancel    context.CancelFunc
+	readDone  chan struct{}
+	closeOnce sync.Once
+	config    tunnel.ClientConfig
+}
+
+func activate(ctx context.Context, config tunnel.ClientConfig, c *connection) (managedTunnel, error) {
+	r := c.response
+	client6, peer6, dns6, err := protocol.ValidateIPv6Parameters(r, config.IPv6)
+	if err != nil {
+		return nil, err
 	}
+	if config.DNSIPv6 != "" {
+		dns6, _ = netip.ParseAddr(config.DNSIPv6)
+	}
+	clientIP, e1 := netip.ParseAddr(r.ClientIPv4)
+	peerIP, e2 := netip.ParseAddr(r.ServerIPv4)
+	dns := r.DNSIPv4
+	if config.DNS != "" {
+		dns = config.DNS
+	}
+	dnsIP, e3 := netip.ParseAddr(dns)
+	if e1 != nil || !clientIP.Is4() || e2 != nil || !peerIP.Is4() || e3 != nil || !dnsIP.Is4() {
+		return nil, errors.New("server returned invalid IPv4 tunnel parameters")
+	}
+	if r.MTU < 576 || r.MTU > config.MTU {
+		return nil, fmt.Errorf("server returned invalid MTU %d", r.MTU)
+	}
+	dev, err := device.Create(config.TUNName, r.MTU)
+	if err != nil {
+		return nil, err
+	}
+	m, err := tunnelnet.NewClientManager(tunnelnet.ClientOptions{
+		TUNName: dev.Name(), ClientIP: clientIP, ServerIP: c.endpoint, TunnelPeer: peerIP,
+		ClientIPv6: client6, TunnelPeerIPv6: peer6, DNSIPv6: dns6, DNS: dnsIP, MTU: r.MTU,
+		StateDir: config.StateDir, SkipLinuxDNS: config.SkipLinuxDNS,
+	}, nil)
+	if err != nil {
+		dev.Close()
+		return nil, err
+	}
+	if err := m.Apply(ctx); err != nil {
+		restoreCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		restoreErr := m.Restore(restoreCtx)
+		cancel()
+		dev.Close()
+		return nil, errors.Join(err, restoreErr)
+	}
+	readerCtx, cancel := context.WithCancel(context.Background())
+	a := &activeTunnel{response: r, dev: dev, manager: m, outbound: make(chan []byte, 256), cancel: cancel, readDone: make(chan struct{}), config: config}
+	go func() { defer close(a.readDone); readTUN(readerCtx, dev, a.outbound, &a.stats) }()
+	log.Printf("global tunnel enabled interface=%s client_ip=%s server_ip=%s transport=%s", dev.Name(), clientIP, c.endpoint, config.Transport)
+	return a, nil
+}
+
+func (a *activeTunnel) parameters() protocol.Message { return a.response }
+func (a *activeTunnel) relay(ctx context.Context, c *connection) error {
+	r := c.response
+	if a.config.DNS != "" {
+		r.DNSIPv4 = a.config.DNS
+	}
+	if a.config.DNSIPv6 != "" {
+		r.DNSIPv6 = a.config.DNSIPv6
+	}
+	return relay(ctx, c.conn, a.dev, a.outbound, r, c.cipher, &a.stats,
+		healthOptions{interval: a.config.HealthInterval, timeout: a.config.FallbackTimeout, dnsName: a.config.HealthDNSName})
+}
+func (a *activeTunnel) restore(ctx context.Context) error {
+	err := a.manager.Restore(ctx)
+	a.closeOnce.Do(func() { a.cancel(); _ = a.dev.Close(); <-a.readDone })
+	return err
 }
 
 func connect(
@@ -226,6 +237,7 @@ func relay(
 	response protocol.Message,
 	cipher protocol.Cipher,
 	stats *counters,
+	health ...healthOptions,
 ) error {
 	clientIP := netip.MustParseAddr(response.ClientIPv4)
 	client6, _ := netip.ParseAddr(response.ClientIPv6)
@@ -238,7 +250,30 @@ func relay(
 		workers.Wait()
 	}()
 
-	errs := make(chan error, 2)
+	errs := make(chan error, 3)
+	var monitor *healthMonitor
+	if response.Heartbeat || len(health) > 0 {
+		options := healthOptions{interval: tunnel.DefaultHealthInterval, timeout: tunnel.DefaultFallbackTimeout}
+		if len(health) > 0 {
+			options = health[0]
+		}
+		if len(health) > 0 {
+			var err error
+			monitor, err = newConnectionHealth(response, cipher, options)
+			if err != nil {
+				return err
+			}
+		} else {
+			monitor = newHealthMonitor(options)
+		}
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			if err := monitor.run(childCtx, conn); err != nil {
+				errs <- err
+			}
+		}()
+	}
 	workers.Add(2)
 	go func() {
 		defer workers.Done()
@@ -277,9 +312,18 @@ func relay(
 				errs <- err
 				return
 			}
+			if kind, nonce, ok := protocol.ParseHeartbeat(payload); ok {
+				if monitor != nil && kind == protocol.DatagramTypePong {
+					monitor.pong(nonce)
+				}
+				continue
+			}
 			packet, info, err := protocol.DecodeDatagram(payload, mtu, cipher)
 			if err != nil || !protocol.MatchesLease(info.Destination, clientIP, client6) {
 				stats.dropped.Add(1)
+				continue
+			}
+			if monitor != nil && monitor.packet(packet) {
 				continue
 			}
 			if err := tunDevice.WritePacket(packet); err != nil {
@@ -290,13 +334,19 @@ func relay(
 		}
 	}()
 
+	finish := func(err error) error {
+		if ctx.Err() == nil && monitor != nil && monitor.expired() {
+			return errors.Join(errHealthTimeout, err)
+		}
+		return err
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-errs:
-		return err
+		return finish(err)
 	case <-conn.Context().Done():
-		return context.Cause(conn.Context())
+		return finish(context.Cause(conn.Context()))
 	}
 }
 
@@ -367,8 +417,7 @@ func readToken(path string) (string, error) {
 }
 
 func waitBackoff(ctx context.Context, duration time.Duration) error {
-	jitter := time.Duration(rand.Int64N(int64(duration/2) + 1))
-	timer := time.NewTimer(duration + jitter)
+	timer := time.NewTimer(duration)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():

@@ -71,6 +71,9 @@ func (c *fragmentConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		if _, _, ok := protocol.ParseHeartbeat(frame); ok {
+			return frame, nil
+		}
 		if len(frame) >= 3 && len(frame) <= unfragmentedLimit && frame[0] == protocol.Version &&
 			(frame[1] == protocol.DatagramTypeIPv4 || frame[1] == protocol.DatagramTypeIPv6) {
 			return frame, nil

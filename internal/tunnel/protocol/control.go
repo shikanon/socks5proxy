@@ -38,6 +38,7 @@ type Message struct {
 	ClientIPv6 string `json:"client_ipv6,omitempty"`
 	ServerIPv6 string `json:"server_ipv6,omitempty"`
 	DNSIPv6    string `json:"dns_ipv6,omitempty"`
+	Heartbeat  bool   `json:"heartbeat,omitempty"`
 }
 
 func WriteMessage(w io.Writer, msg Message) error {

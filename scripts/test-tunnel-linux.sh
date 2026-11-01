@@ -22,6 +22,15 @@ root_dir="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 transport_mode="${TUNNEL_TRANSPORT:-quic}"
 ipv6="${TUNNEL_IPV6:-false}"
 endpoint_ipv6="${TUNNEL_ENDPOINT_IPV6:-false}"
+watchdog="${TUNNEL_WATCHDOG:-false}"
+watchdog_args=(-disconnect-policy block)
+if [[ "$watchdog" == "true" ]]; then
+  [[ "$transport_mode" != "proxy" ]] || { echo "Watchdog acceptance requires tunnel mode." >&2; exit 1; }
+  watchdog_args=(-disconnect-policy direct -fallback-timeout 3s -health-interval 500ms -reconnect-interval 500ms -daemon)
+elif [[ "$watchdog" != "false" ]]; then
+  echo "TUNNEL_WATCHDOG must be true or false." >&2
+  exit 1
+fi
 ipv6_args=()
 endpoint="192.0.2.1:1443"
 server_name="192.0.2.1"
@@ -137,7 +146,12 @@ ip -n "$target_ns" addr add 198.51.100.2/24 dev s5pt0
 ip -n "$target_ns" link set s5pt0 up
 ip -n "$target_ns" route add default via 198.51.100.1
 
-ip netns exec "$server_ns" iptables -A FORWARD -i s5ps0 -o s5ps1 -j DROP
+if [[ "$watchdog" == "true" ]]; then
+  ip netns exec "$server_ns" sysctl -qw net.ipv4.ip_forward=1
+  ip netns exec "$server_ns" iptables -t nat -A POSTROUTING -s 192.0.2.0/24 -o s5ps1 -j MASQUERADE
+else
+  ip netns exec "$server_ns" iptables -A FORWARD -i s5ps0 -o s5ps1 -j DROP
+fi
 if [[ "$ipv6" == "true" ]]; then
   ip -n "$client_ns" -6 addr add 2001:db8:1::2/64 dev s5pc0 nodad
   ip -n "$server_ns" -6 addr add 2001:db8:1::1/64 dev s5ps0 nodad
@@ -145,7 +159,11 @@ if [[ "$ipv6" == "true" ]]; then
   ip -n "$target_ns" -6 addr add 2001:db8:2::2/64 dev s5pt0 nodad
   ip -n "$client_ns" -6 route add default via 2001:db8:1::1
   ip -n "$target_ns" -6 route add default via 2001:db8:2::1
-  ip netns exec "$server_ns" ip6tables -A FORWARD -i s5ps0 -o s5ps1 -j DROP
+  if [[ "$watchdog" == "true" ]]; then
+    ip netns exec "$server_ns" sysctl -qw net.ipv6.conf.all.forwarding=1
+  else
+    ip netns exec "$server_ns" ip6tables -A FORWARD -i s5ps0 -o s5ps1 -j DROP
+  fi
 fi
 
 python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256))*4096)' "$work_dir/payload.bin"
@@ -154,6 +172,9 @@ ip netns exec "$target_ns" python3 "$root_dir/scripts/benchmark-tunnel.py" \
 target_pid="$!"
 ip netns exec "$target_ns" python3 -c '
 import select, socket, struct
+def dns_response(query):
+    answer = b"\xc0\x0c" + query[-4:] + struct.pack("!IH", 60, 4) + socket.inet_aton("198.51.100.2")
+    return query[:2] + b"\x81\x80" + query[4:6] + b"\x00\x01\x00\x00\x00\x00" + query[12:] + answer
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.bind(("198.51.100.2", 53))
 tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -172,14 +193,14 @@ while True:
                 f = c.makefile("rb")
                 size = struct.unpack("!H", f.read(2))[0]
                 query = f.read(size)
-                response = query[:2] + b"\x81\x80" + query[4:6] + b"\x00\x00\x00\x00\x00\x00" + query[12:]
+                response = dns_response(query)
                 c.sendall(struct.pack("!H", len(response)) + response)
                 f.close()
             continue
         query, peer = ready.recvfrom(65535)
         response = query
         if ready is s:
-            response = query[:2] + b"\x81\x80" + query[4:6] + b"\x00\x00\x00\x00\x00\x00" + query[12:]
+            response = dns_response(query)
         ready.sendto(response, peer)
 ' >"$work_dir/dns.log" 2>&1 &
 dns_pid="$!"
@@ -188,14 +209,14 @@ if [[ "$ipv6" == "true" ]]; then
   ip netns exec "$target_ns" python3 "$root_dir/scripts/test-tunnel-ipv6.py" \
     serve "$work_dir" >"$work_dir/ipv6-target.log" 2>&1 &
   ipv6_pid="$!"
-  if ip netns exec "$client_ns" curl -g --noproxy '*' -fsS --connect-timeout 1 --max-time 3 \
+  if [[ "$watchdog" == "false" ]] && ip netns exec "$client_ns" curl -g --noproxy '*' -fsS --connect-timeout 1 --max-time 3 \
     "$ipv6_url/" >/dev/null 2>&1; then
     echo "Direct IPv6 traffic unexpectedly reached the target." >&2
     exit 1
   fi
 fi
 
-if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
+if [[ "$watchdog" == "false" ]] && ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
   http://198.51.100.2:8080/ >/dev/null 2>&1; then
   echo "Direct client traffic unexpectedly reached the target." >&2
   exit 1
@@ -254,6 +275,7 @@ start_server() {
   -table-token-length 8 \
   -client-id integration \
   -outbound-interface s5ps1 \
+  -dns 198.51.100.2 \
   -state-dir "$work_dir/server-state" \
   -mtu "$configured_mtu" \
   "${ipv6_args[@]}" \
@@ -276,9 +298,32 @@ ip netns exec "$client_ns" "$work_dir/client" \
   -mtu "$configured_mtu" \
   "${ipv6_args[@]}" \
   -linux-dns=false \
-  -dns 1.1.1.1 \
+  -dns 198.51.100.2 \
+  "${watchdog_args[@]}" \
   -obfs "$obfs_mode" >"$work_dir/client.log" 2>&1 &
 client_pid="$!"
+
+wait_mode() {
+  python3 - "$work_dir/client-state" "$1" <<'PY'
+import json, pathlib, sys, time
+path = pathlib.Path(sys.argv[1]) / "client-status.json"
+deadline = time.monotonic() + 15
+while time.monotonic() < deadline:
+    try:
+        status = json.loads(path.read_text())
+        if status["mode"] == sys.argv[2]:
+            print("watchdog:", status)
+            break
+    except (OSError, ValueError):
+        pass
+    time.sleep(0.1)
+else:
+    raise SystemExit(f"watchdog did not reach {sys.argv[2]}")
+PY
+}
+if [[ "$watchdog" == "true" ]]; then
+  wait_mode tunnel
+fi
 
 connected="false"
 for _ in $(seq 1 20); do
@@ -350,6 +395,84 @@ if [[ "$ipv6" == "true" ]]; then
   verify_ipv6
 fi
 
+# Silent loss leaves the server and TCP socket alive: transport FIN detection
+# cannot substitute for a verified application heartbeat.
+verify_direct() {
+  wait_mode direct
+  [[ ! -e "$work_dir/client-state/network-state.json" ]]
+  [[ "$(ip -n "$client_ns" route get 198.51.100.2)" == *"dev s5pc0"* ]]
+  ip -n "$client_ns" route show >"$work_dir/client-routes-direct"
+  cmp "$work_dir/client-routes-before" "$work_dir/client-routes-direct"
+  ip netns exec "$client_ns" curl --noproxy '*' -fsS --max-time 5 \
+    http://198.51.100.2:8080/payload.bin -o "$work_dir/direct.bin"
+  cmp "$work_dir/payload.bin" "$work_dir/direct.bin"
+  if [[ "$ipv6" == "true" ]]; then
+    [[ "$(ip -n "$client_ns" -6 route get 2001:db8:2::2)" == *"dev s5pc0"* ]]
+    ip -n "$client_ns" -6 route show >"$work_dir/client-routes6-direct"
+    cmp "$work_dir/client-routes6-before" "$work_dir/client-routes6-direct"
+    ip netns exec "$client_ns" curl -g --noproxy '*' -fsS --max-time 5 \
+      "$ipv6_url/payload.bin" -o "$work_dir/direct6.bin"
+    cmp "$work_dir/payload.bin" "$work_dir/direct6.bin"
+  fi
+  echo "Direct physical IPv4/IPv6 payload and route restoration verified."
+}
+outer_drop() {
+  local action="$1" proto="tcp" firewall="iptables"
+  [[ "$transport_mode" == "quic" ]] && proto="udp"
+  [[ "$endpoint_ipv6" == "true" ]] && firewall="ip6tables"
+  # Drop at the peer so the client's UDP send succeeds and only the watchdog
+  # can detect silence; local OUTPUT DROP can report EPERM immediately.
+  ip netns exec "$server_ns" "$firewall" "$action" INPUT -p "$proto" --dport 1443 -j DROP
+}
+if [[ "$watchdog" == "true" ]]; then
+  forwarding_drop() {
+    local action="$1"
+    ip netns exec "$server_ns" iptables "$action" FORWARD -s 10.255.0.0/24 -j DROP
+    if [[ "$ipv6" == "true" ]]; then
+      ip netns exec "$server_ns" ip6tables "$action" FORWARD -s fd00:5:5::/64 -j DROP
+    fi
+  }
+  # Outer heartbeats remain live, but the IP forwarding path is broken.
+  # Insertion before the tunnel's ACCEPT rules leaves physical direct intact.
+  forwarding_drop -I
+  start_loss="$(date +%s)"
+  verify_direct
+  [[ "$(( $(date +%s) - start_loss ))" -le 8 ]]
+  # Stay direct through more than one complete authentication/probe attempt.
+  for _ in $(seq 1 35); do
+    [[ ! -e "$work_dir/client-state/network-state.json" ]]
+    [[ "$(ip -n "$client_ns" route get 198.51.100.2)" == *"dev s5pc0"* ]]
+    sleep 0.2
+  done
+  forwarding_drop -D
+  wait_mode tunnel
+  ip netns exec "$client_ns" curl --noproxy '*' -fsS --max-time 5 \
+    http://198.51.100.2:8080/payload.bin -o "$work_dir/after-forwarding.bin"
+  cmp "$work_dir/payload.bin" "$work_dir/after-forwarding.bin"
+  echo "Live heartbeat with broken forwarding, stable direct mode and recovery verified."
+  outer_drop -A
+  start_loss="$(date +%s)"
+  verify_direct
+  [[ "$(( $(date +%s) - start_loss ))" -le 8 ]]
+  # Keep the outage in place while killing the worker. The independent parent
+  # must restore the dead child's state before spawning a replacement.
+  outer_drop -D
+  wait_mode tunnel
+  child_pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$work_dir/client-state/client-status.json")"
+  outer_drop -A
+  kill -KILL "$child_pid"
+  verify_direct
+  kill -0 "$client_pid"
+  outer_drop -D
+  wait_mode tunnel
+  new_child_pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$work_dir/client-state/client-status.json")"
+  [[ "$new_child_pid" != "$child_pid" ]]
+  ip netns exec "$client_ns" curl --noproxy '*' -fsS --max-time 5 \
+    http://198.51.100.2:8080/payload.bin -o "$work_dir/after-crash.bin"
+  cmp "$work_dir/payload.bin" "$work_dir/after-crash.bin"
+  echo "Silent loss, reconnection and supervised child SIGKILL verified."
+fi
+
 kill -TERM "$server_pid"
 wait "$server_pid" 2>/dev/null || true
 server_pid=""
@@ -370,14 +493,18 @@ if [[ "$ipv6" == "true" ]]; then
   for state in firewall6 forward6; do
     cmp "$work_dir/server-$state-before" "$work_dir/server-$state-stopped"
   done
-  if ip netns exec "$client_ns" curl -g --noproxy '*' -fsS --connect-timeout 1 --max-time 3 \
+  if [[ "$watchdog" == "false" ]] && ip netns exec "$client_ns" curl -g --noproxy '*' -fsS --connect-timeout 1 --max-time 3 \
     "$ipv6_url/" >/dev/null 2>&1; then
     echo "IPv6 traffic leaked after the tunnel server stopped." >&2
     exit 1
   fi
 fi
-sleep 1
-if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
+if [[ "$watchdog" == "true" ]]; then
+  verify_direct
+else
+  sleep 1
+fi
+if [[ "$watchdog" == "false" ]] && ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
   http://198.51.100.2:8080/ >/dev/null 2>&1; then
   echo "Client traffic leaked after the tunnel server stopped." >&2
   exit 1
@@ -386,6 +513,9 @@ fi
 # Restart the same endpoint and require the existing client to reconnect
 # without changing its routes or consuming packets in the old relay.
 start_server
+if [[ "$watchdog" == "true" ]]; then
+  wait_mode tunnel
+fi
 connected="false"
 for _ in $(seq 1 20); do
   if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
@@ -432,4 +562,4 @@ if [[ "$ipv6" == "true" ]]; then
   cmp "$work_dir/client-routes6-before" "$work_dir/client-routes6-after"
 fi
 
-echo "Tunnel integration test passed: transport=$transport_mode obfs=$obfs_mode ipv6=$ipv6 endpoint_ipv6=$endpoint_ipv6"
+echo "Tunnel integration test passed: transport=$transport_mode obfs=$obfs_mode ipv6=$ipv6 endpoint_ipv6=$endpoint_ipv6 watchdog=$watchdog"

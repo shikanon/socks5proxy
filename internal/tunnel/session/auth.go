@@ -15,10 +15,26 @@ import (
 	"github.com/shikanon/socks5proxy/internal/tunnel/transport"
 )
 
-type Options struct{ IPv6 bool }
+type Options struct{ IPv6, Heartbeat bool }
+
+var errAuthRejected = errors.New("authentication failed")
 
 func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsConfig *tls.Config, kind string, control transport.SocketControl, options ...Options) (result transport.Conn, response protocol.Message, cipher protocol.Cipher, err error) {
+	result, response, cipher, err = connectOnce(ctx, serverAddr, clientID, token, obfs, tlsConfig, kind, control, options...)
+	// Legacy TCP servers discard unknown fields before checking the JSON proof.
+	// Retry their explicit rejection with the legacy request; the response still
+	// needs a valid server proof (and certificate for TLS).
+	if errors.Is(err, errAuthRejected) && kind != "quic" && len(options) > 0 && options[0].Heartbeat {
+		opt := options[0]
+		opt.Heartbeat = false
+		return connectOnce(ctx, serverAddr, clientID, token, obfs, tlsConfig, kind, control, opt)
+	}
+	return
+}
+
+func connectOnce(ctx context.Context, serverAddr, clientID, token, obfs string, tlsConfig *tls.Config, kind string, control transport.SocketControl, options ...Options) (result transport.Conn, response protocol.Message, cipher protocol.Cipher, err error) {
 	ipv6 := len(options) > 0 && options[0].IPv6
+	heartbeat := len(options) > 0 && options[0].Heartbeat
 	authCtx, authCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer authCancel()
 	conn, err := transport.DialTunnelWithControl(authCtx, serverAddr, tlsConfig, kind, control)
@@ -50,7 +66,8 @@ func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsC
 	request := protocol.Message{
 		Type: protocol.TypeAuthRequest, Version: protocol.Version,
 		ClientID: clientID, Token: token, Obfs: obfs,
-		IPv6: ipv6,
+		IPv6:      ipv6,
+		Heartbeat: heartbeat,
 	}
 	challenge := ""
 	key := sha256.Sum256([]byte(token))
@@ -81,6 +98,9 @@ func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsC
 		return nil, protocol.Message{}, nil, err
 	}
 	if response.Type == protocol.TypeError {
+		if response.Error == errAuthRejected.Error() {
+			return nil, protocol.Message{}, nil, errAuthRejected
+		}
 		return nil, protocol.Message{}, nil, errors.New(response.Error)
 	}
 	if response.Version != protocol.Version || response.Type != protocol.TypeAuthResponse || response.Obfs != obfs {
@@ -88,6 +108,9 @@ func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsC
 	}
 	if isTCP && !protocol.VerifyAuthProof(key, protocol.ServerProofRole, challenge, request.Nonce, response) {
 		return nil, protocol.Message{}, nil, errors.New("invalid server authentication proof")
+	}
+	if response.Heartbeat && !heartbeat {
+		return nil, protocol.Message{}, nil, errors.New("server returned unsolicited heartbeat capability")
 	}
 	if _, _, _, err := protocol.ValidateIPv6Parameters(response, ipv6); err != nil {
 		return nil, protocol.Message{}, nil, err

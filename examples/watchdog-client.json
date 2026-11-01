@@ -1,0 +1,14 @@
+{
+  "transport": "tcp",
+  "server": "vpn.example.com:443",
+  "client_id": "desktop",
+  "token_file": "client.token",
+  "ca": "server.crt",
+  "ipv6": false,
+  "disconnect_policy": "direct",
+  "fallback_timeout": "10s",
+  "health_interval": "2s",
+  "health_dns_name": "example.com",
+  "reconnect_interval": "5s",
+  "obfs": "none"
+}

@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/shikanon/socks5proxy/internal/keytable"
 )
@@ -15,30 +16,39 @@ const (
 	// Leave room in QUIC's minimum 1200-byte UDP payload for a short header,
 	// a 20-byte connection ID, packet number, AEAD tag, DATAGRAM frame and
 	// our two-byte packet length. Do not depend on path MTU discovery.
-	DefaultMTU         = 1150
-	DefaultTunnelCIDR  = "10.255.0.0/24"
-	DefaultDNS         = "1.1.1.1"
-	DualStackMTU       = 1280
-	DefaultTunnelCIDR6 = "fd00:5:5::/64"
-	DefaultDNS6        = "2606:4700:4700::1111"
+	DefaultMTU               = 1150
+	DefaultTunnelCIDR        = "10.255.0.0/24"
+	DefaultDNS               = "1.1.1.1"
+	DualStackMTU             = 1280
+	DefaultTunnelCIDR6       = "fd00:5:5::/64"
+	DefaultDNS6              = "2606:4700:4700::1111"
+	DefaultFallbackTimeout   = 10 * time.Second
+	DefaultHealthInterval    = 2 * time.Second
+	DefaultReconnectInterval = 5 * time.Second
+	DefaultHealthDNSName     = "example.com"
 )
 
 type ClientConfig struct {
-	Transport    string
-	ServerAddr   string
-	ClientID     string
-	TokenFile    string
-	TableFile    string
-	CAFile       string
-	ServerName   string
-	DNS          string
-	IPv6         bool
-	DNSIPv6      string
-	MTU          int
-	StateDir     string
-	Obfs         string
-	TUNName      string
-	SkipLinuxDNS bool
+	Transport         string
+	ServerAddr        string
+	ClientID          string
+	TokenFile         string
+	TableFile         string
+	CAFile            string
+	ServerName        string
+	DNS               string
+	IPv6              bool
+	DNSIPv6           string
+	MTU               int
+	StateDir          string
+	Obfs              string
+	TUNName           string
+	SkipLinuxDNS      bool
+	DisconnectPolicy  string
+	FallbackTimeout   time.Duration
+	HealthInterval    time.Duration
+	HealthDNSName     string
+	ReconnectInterval time.Duration
 }
 
 type ServerConfig struct {
@@ -105,6 +115,21 @@ func ParseObfsAllow(value string) (map[string]bool, error) {
 }
 
 func (c *ClientConfig) SetDefaults() {
+	if c.DisconnectPolicy == "" {
+		c.DisconnectPolicy = "direct"
+	}
+	if c.FallbackTimeout == 0 {
+		c.FallbackTimeout = DefaultFallbackTimeout
+	}
+	if c.HealthInterval == 0 {
+		c.HealthInterval = DefaultHealthInterval
+	}
+	if c.HealthDNSName == "" {
+		c.HealthDNSName = DefaultHealthDNSName
+	}
+	if c.ReconnectInterval == 0 {
+		c.ReconnectInterval = DefaultReconnectInterval
+	}
 	if mode, err := NormalizeTransport(c.Transport); err == nil {
 		c.Transport = mode
 	}
@@ -133,6 +158,17 @@ func (c *ClientConfig) SetDefaults() {
 }
 
 func (c ClientConfig) Validate() error {
+	if err := ValidateHealthDNSName(c.HealthDNSName); err != nil {
+		return err
+	}
+	if c.DisconnectPolicy != "direct" && c.DisconnectPolicy != "block" {
+		return errors.New("disconnect policy must be direct or block")
+	}
+	if c.FallbackTimeout < 200*time.Millisecond || c.FallbackTimeout > 5*time.Minute ||
+		c.HealthInterval < 100*time.Millisecond || c.HealthInterval > c.FallbackTimeout/2 ||
+		c.ReconnectInterval < 100*time.Millisecond || c.ReconnectInterval > 5*time.Minute {
+		return errors.New("fallback timeout must be 200ms..5m, health interval 100ms..half the fallback timeout, reconnect interval 100ms..5m")
+	}
 	mode, err := NormalizeTransport(c.Transport)
 	if err != nil {
 		return err
@@ -169,6 +205,25 @@ func (c ClientConfig) Validate() error {
 	}
 	if _, err := NormalizeObfs(c.Obfs); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ValidateHealthDNSName accepts an ASCII hostname, optionally with a final dot.
+func ValidateHealthDNSName(name string) error {
+	name = strings.TrimSuffix(name, ".")
+	if len(name) == 0 || len(name) > 253 {
+		return errors.New("health DNS name must be an ASCII hostname of 1..253 bytes")
+	}
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("health DNS name has an invalid label")
+		}
+		for _, ch := range label {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') {
+				return errors.New("health DNS name must contain only ASCII letters, digits, hyphens and dots")
+			}
+		}
 	}
 	return nil
 }

@@ -74,3 +74,63 @@ func TestTransactionPersistsAppliedStepForCrashRecovery(t *testing.T) {
 		t.Fatalf("unexpected recovery commands: %#v", runner.commands)
 	}
 }
+
+func TestRestoreFailureRemainsPendingAfterLowerStepsSucceed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	r := &fakeRunner{failAt: 2}
+	tx, err := newTransaction(path, r, []Command{{Name: "first"}, {Name: "middle"}, {Name: "last"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.markApplied(3); err != nil {
+		t.Fatal(err)
+	}
+	if tx.restore(context.Background()) == nil {
+		t.Fatal("expected failure")
+	}
+	retry := &fakeRunner{}
+	reloaded, err := loadTransaction(path, retry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reloaded.restore(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(retry.commands) != 1 || retry.commands[0].Name != "middle" {
+		t.Fatalf("lost failed undo: %+v", retry.commands)
+	}
+}
+
+func TestAbsentResourcesAndExclusiveLocks(t *testing.T) {
+	for _, c := range []Command{
+		{Name: "ip", Args: []string{"route", "del", "0.0.0.0/1"}},
+		{Name: "ip", Args: []string{"link", "set", "dev", "gone", "down"}},
+	} {
+		if !alreadyAbsent(c, "Cannot find device gone: does not exist") {
+			t.Fatal("missing resource not recoverable")
+		}
+		if alreadyAbsent(c, "does not exist: Operation not permitted") {
+			t.Fatal("ignored permission failure")
+		}
+	}
+	if alreadyAbsent(Command{Name: "resolvectl", Args: []string{"revert", "gone"}}, "does not exist") {
+		t.Fatal("ignored DNS failure")
+	}
+	dir := t.TempDir()
+	a, err := AcquireLock(dir, "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := AcquireLock(dir, "client"); err == nil {
+		b.Close()
+		t.Fatal("duplicate client lock")
+	}
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, err := AcquireLock(dir, "client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+}

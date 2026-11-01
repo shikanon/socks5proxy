@@ -264,6 +264,7 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		MTU:        s.config.MTU,
 		DNSIPv4:    s.config.DNS,
 		Obfs:       obfs,
+		Heartbeat:  request.Heartbeat,
 	}
 	if request.IPv6 {
 		prefix6, _ := netip.ParsePrefix(s.config.TunnelCIDR6)
@@ -315,6 +316,14 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		payload, err := conn.ReceiveDatagram(ctx)
 		if err != nil {
 			return
+		}
+		if kind, nonce, ok := protocol.ParseHeartbeat(payload); ok {
+			if request.Heartbeat && kind == protocol.DatagramTypePing {
+				if err := conn.SendDatagram(protocol.Heartbeat(protocol.DatagramTypePong, nonce)); err != nil {
+					return
+				}
+			}
+			continue
 		}
 		packet, info, err := protocol.DecodeDatagram(payload, current.mtu, current.cipher)
 		if err != nil || !protocol.MatchesLease(info.Source, current.addr, current.addr6) {

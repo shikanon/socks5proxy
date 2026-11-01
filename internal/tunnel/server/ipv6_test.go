@@ -80,7 +80,7 @@ func TestDualStackAuthenticatedSessions(t *testing.T) {
 						s.handleConnection(ctx, c)
 					}
 				}()
-				opt := clientsession.Options{IPv6: mode != "legacy"}
+				opt := clientsession.Options{IPv6: mode != "legacy", Heartbeat: mode != "legacy"}
 				var c transport.Conn
 				var response protocol.Message
 				var cipher protocol.Cipher
@@ -101,10 +101,26 @@ func TestDualStackAuthenticatedSessions(t *testing.T) {
 				}
 				defer c.CloseWithError(0, "test")
 				if mode == "legacy" {
-					if response.IPv6 || response.ClientIPv6 != "" || (kind == "quic" && response.MTU != tunnel.DefaultMTU) {
+					if response.Heartbeat || response.IPv6 || response.ClientIPv6 != "" || (kind == "quic" && response.MTU != tunnel.DefaultMTU) {
 						t.Fatal("legacy compatibility broken", response)
 					}
 					return
+				}
+				if !response.Heartbeat {
+					t.Fatal("heartbeat capability missing")
+				}
+				if err := c.SendDatagram(protocol.Heartbeat(protocol.DatagramTypePing, 123)); err != nil {
+					t.Fatal(err)
+				}
+				pong, err := c.ReceiveDatagram(ctx)
+				k, n, ok := protocol.ParseHeartbeat(pong)
+				if err != nil || !ok || k != protocol.DatagramTypePong || n != 123 {
+					t.Fatal("dual-stack heartbeat failed", err)
+				}
+				select {
+				case <-d.packets:
+					t.Fatal("heartbeat reached device")
+				default:
 				}
 				downDone := make(chan struct{})
 				go func() { s.downlink(ctx); close(downDone) }()
