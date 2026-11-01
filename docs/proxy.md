@@ -2,6 +2,8 @@
 
 proxy 模式转发 TCP 应用流量。它支持 SOCKS5 CONNECT、HTTP 普通请求和 HTTP CONNECT（包括 HTTPS 隧道）；不支持 SOCKS BIND、UDP ASSOCIATE，也不创建系统 TUN。
 
+默认 `-proxy-scope all` 将进入代理端口的全部连接发往远程。客户端可用 `-proxy-scope rules -proxy-domains 'example.com,*.example.org'` 或 `-rules-file` 按网站主机名分流；未命中直接连接目标，命中后远程失败不会回落直连。可加 `-pac-listen 127.0.0.1:8090` 提供浏览器 PAC，完整规则和系统全局模式见[流量范围说明](proxy-scopes.md)。
+
 ## 同机运行
 
 从仓库根目录构建（也可以使用[下载的桌面二进制](release.md)替换命令名）：
@@ -45,7 +47,7 @@ curl --noproxy "" --proxy http://127.0.0.1:8888 https://example.com/
 curl --noproxy "" --proxy socks5h://127.0.0.1:8888 https://example.com/
 ```
 
-`socks5h` 将目标域名交给服务端解析；`socks5` 的 curl 用法可能在本机解析域名。
+`socks5h` 保留目标域名，命中代理规则时交给服务端解析，直连时由本机解析；`socks5` 的 curl 用法可能先在本机解析域名，届时只能按 IP 规则匹配。
 
 | 客户端参数 | 浏览器/系统代理配置 |
 | --- | --- |

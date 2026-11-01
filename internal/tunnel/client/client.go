@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/shikanon/socks5proxy/internal/keytable"
 	"github.com/shikanon/socks5proxy/internal/tunnel"
 	"github.com/shikanon/socks5proxy/internal/tunnel/device"
 	tunnelnet "github.com/shikanon/socks5proxy/internal/tunnel/network"
@@ -36,12 +37,19 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	token, err := readToken(config.TokenFile)
+	var table *keytable.Table
+	var token string
+	var err error
+	if config.Transport == "tcp-table" {
+		table, err = keytable.Load(config.TableFile)
+	} else {
+		token, err = readToken(config.TokenFile)
+		if err == nil && len(token) < 32 {
+			err = errors.New("client token must contain at least 32 characters")
+		}
+	}
 	if err != nil {
 		return err
-	}
-	if len(token) < 32 {
-		return errors.New("client token must contain at least 32 characters")
 	}
 	if err := tunnelnet.RecoverClientState(ctx, config.StateDir, nil); err != nil {
 		return fmt.Errorf("recover previous network state: %w", err)
@@ -57,13 +65,15 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 	_, serverPort, _ := net.SplitHostPort(config.ServerAddr)
 	dialAddr := net.JoinHostPort(serverIP.String(), serverPort)
 	var tlsConfig *tls.Config
-	if config.Transport != "tcp-plain" {
+	if config.Transport != "tcp-plain" && config.Transport != "tcp-table" {
 		tlsConfig, err = transport.ClientTLS(config.CAFile, serverName)
 		if err != nil {
 			return err
 		}
-	} else {
+	} else if config.Transport == "tcp-plain" {
 		log.Print("WARNING: tcp-plain has no packet encryption or integrity; obfuscation is not security")
+	} else {
+		log.Print("tcp-table uses a learning-only daily substitution table; no TLS or packet integrity")
 	}
 
 	var (
@@ -92,7 +102,14 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		conn, response, cipher, err := connect(ctx, dialAddr, config.ClientID, token, obfs, tlsConfig, config.Transport)
+		var conn transport.Conn
+		var response protocol.Message
+		var cipher protocol.Cipher
+		if table != nil {
+			conn, response, cipher, err = session.ConnectTable(ctx, dialAddr, config.ClientID, table, nil)
+		} else {
+			conn, response, cipher, err = connect(ctx, dialAddr, config.ClientID, token, obfs, tlsConfig, config.Transport)
+		}
 		if err != nil {
 			if !networkApplied {
 				return err

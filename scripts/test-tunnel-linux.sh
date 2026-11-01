@@ -21,6 +21,9 @@ fi
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 transport_mode="${TUNNEL_TRANSPORT:-quic}"
 obfs_mode="${TUNNEL_OBFS:-random}"
+if [[ "$transport_mode" == "tcp-table" ]]; then
+  obfs_mode="${TUNNEL_OBFS:-none}"
+fi
 configured_mtu="${TUNNEL_TEST_MTU:-1280}"
 packet_mtu="$configured_mtu"
 [[ "$transport_mode" == "quic" ]] && packet_mtu=1150
@@ -58,17 +61,20 @@ cd "$root_dir"
 CGO_ENABLED=0 go build -o "$work_dir/client" ./cmd/client
 CGO_ENABLED=0 go build -o "$work_dir/server" ./cmd/server
 
-openssl req -x509 -newkey rsa:2048 -nodes \
-  -keyout "$work_dir/server.key" \
-  -out "$work_dir/server.crt" \
-  -days 1 \
-  -subj "/CN=192.0.2.1" \
-  -addext "subjectAltName=IP:192.0.2.1" >/dev/null 2>&1
+if [[ "$transport_mode" == "quic" || "$transport_mode" == "tcp" ]]; then
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$work_dir/server.key" \
+    -out "$work_dir/server.crt" \
+    -days 1 \
+    -subj "/CN=192.0.2.1" \
+    -addext "subjectAltName=IP:192.0.2.1" >/dev/null 2>&1
+  chmod 600 "$work_dir/server.key"
+fi
 
 token="$(openssl rand -hex 32)"
 printf '%s\n' "$token" > "$work_dir/client.token"
 printf 'integration:%s\n' "$(printf '%s' "$token" | sha256sum | awk '{print $1}')" > "$work_dir/clients.tokens"
-chmod 600 "$work_dir/client.token" "$work_dir/clients.tokens" "$work_dir/server.key"
+chmod 600 "$work_dir/client.token" "$work_dir/clients.tokens"
 
 ip netns add "$client_ns"
 ip netns add "$server_ns"
@@ -171,6 +177,9 @@ start_server() {
   -cert "$work_dir/server.crt" \
   -key "$work_dir/server.key" \
   -token-file "$work_dir/clients.tokens" \
+  -table-file "$work_dir/token-table.json" \
+  -table-token-length 8 \
+  -client-id integration \
   -outbound-interface s5ps1 \
   -state-dir "$work_dir/server-state" \
   -mtu "$configured_mtu" \
@@ -188,6 +197,7 @@ ip netns exec "$client_ns" "$work_dir/client" \
   -ca "$work_dir/server.crt" \
   -client-id integration \
   -token-file "$work_dir/client.token" \
+  -table-file "$work_dir/token-table.json" \
   -state-dir "$work_dir/client-state" \
   -mtu "$configured_mtu" \
   -linux-dns=false \

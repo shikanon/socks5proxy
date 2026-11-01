@@ -123,25 +123,7 @@ func connectSOCKS(wire net.Conn, address string) error {
 	return nil
 }
 
-func handleHTTPProxy(ctx context.Context, local, wire net.Conn, options ProxyOptions) error {
-	request, reader, err := readProxyHTTPRequest(local)
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, errProxyHeaderTooLarge) {
-			status = http.StatusRequestHeaderFieldsTooLarge
-		}
-		writeHTTPError(local, status)
-		return err
-	}
-	address, err := httpProxyTarget(request)
-	if err != nil {
-		writeHTTPError(local, 400)
-		return err
-	}
-	if err := connectSOCKS(wire, address); err != nil {
-		writeHTTPError(local, 502)
-		return err
-	}
+func forwardHTTPRequest(ctx context.Context, local, wire net.Conn, request *http.Request, reader *bufio.Reader, options ProxyOptions) error {
 	if request.Method == http.MethodConnect {
 		if err := writeProxy(local, []byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
 			return err

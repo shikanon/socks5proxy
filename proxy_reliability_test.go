@@ -102,10 +102,13 @@ func TestHandleProxyRequest(t *testing.T) {
 		conn, peer := tcpPair(t)
 		auth, err := CreateAuth("random", "test")
 		require.NoError(t, err)
+		// The client must know the destination before choosing its route.
+		_, err = peer.Write([]byte{5, 1, 0, 5, 1, 0, 1, 127, 0, 0, 1, 0, 80})
+		require.NoError(t, err)
 		require.Error(t, handleProxyRequest(conn, address, auth, "socks5"))
-		peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-		_, err = peer.Read(make([]byte, 1))
-		assert.ErrorIs(t, err, io.EOF)
+		response, err := io.ReadAll(peer)
+		require.NoError(t, err)
+		assert.Equal(t, append([]byte{5, 0}, socksReply(5)...), response)
 	})
 }
 

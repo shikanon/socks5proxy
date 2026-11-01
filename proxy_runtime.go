@@ -10,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/shikanon/socks5proxy/routing"
 )
 
 // ProxyOptions bounds resource use in application proxy mode. Zero selects the
@@ -19,6 +21,10 @@ type ProxyOptions struct {
 	DialTimeout      time.Duration
 	HandshakeTimeout time.Duration
 	IdleTimeout      time.Duration
+	// Scope is "all" (default) or "rules". Unmatched hosts in rules mode go direct.
+	Scope     string
+	Rules     *routing.Rules
+	PACListen string // Optional loopback HTTP endpoint serving /proxy.pac.
 }
 
 func (o ProxyOptions) normalized() (ProxyOptions, error) {
@@ -36,6 +42,26 @@ func (o ProxyOptions) normalized() (ProxyOptions, error) {
 	}
 	if o.IdleTimeout == 0 {
 		o.IdleTimeout = 5 * time.Minute
+	}
+	if o.Scope == "" {
+		o.Scope = "all"
+	}
+	switch o.Scope {
+	case "all":
+		if len(o.Rules.Patterns()) != 0 {
+			return o, errors.New("website rules require -proxy-scope rules")
+		}
+	case "rules":
+		if len(o.Rules.Patterns()) == 0 {
+			return o, errors.New("-proxy-scope rules requires at least one website rule")
+		}
+	default:
+		return o, fmt.Errorf("unsupported proxy scope %q; expected all or rules", o.Scope)
+	}
+	if o.PACListen != "" {
+		if err := validateLoopbackAddress(o.PACListen, true); err != nil {
+			return o, fmt.Errorf("PAC listen address: %w", err)
+		}
 	}
 	return o, nil
 }

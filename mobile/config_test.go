@@ -2,9 +2,12 @@ package mobile
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/shikanon/socks5proxy/internal/keytable"
 	"github.com/shikanon/socks5proxy/internal/tunnel/protocol"
 )
 
@@ -73,6 +76,32 @@ func TestConfigTLS(t *testing.T) {
 	tls, err := cfg.tlsConfig()
 	if err != nil || tls.InsecureSkipVerify || tls.MinVersion != tls.MaxVersion {
 		t.Fatal("secure TLS defaults not applied", err)
+	}
+}
+
+func TestTableMobileConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "table")
+	table, _, err := keytable.LoadOrCreate(path, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	cfg := testConfig()
+	cfg.Transport, cfg.Token, cfg.TokenTable = "tcp-table", "", data
+	parsed, err := parseConfig(configJSON(t, cfg))
+	if err != nil || parsed.table == nil || parsed.table.Credential() != table.Credential() {
+		t.Fatal("mobile rejected valid table", err)
+	}
+	if tls, err := parsed.tlsConfig(); err != nil || tls != nil {
+		t.Fatal("mobile table requires TLS", err)
+	}
+	cfg.Obfs = "random"
+	if _, err := parseConfig(configJSON(t, cfg)); err == nil {
+		t.Fatal("mobile accepted extra obfuscation")
+	}
+	cfg.Obfs, cfg.TokenTable = "none", nil
+	if _, err := parseConfig(configJSON(t, cfg)); err == nil {
+		t.Fatal("mobile accepted a missing table")
 	}
 }
 

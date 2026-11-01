@@ -13,20 +13,23 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/shikanon/socks5proxy/internal/keytable"
 	"github.com/shikanon/socks5proxy/internal/tunnel"
 	"github.com/shikanon/socks5proxy/internal/tunnel/protocol"
 )
 
 type config struct {
-	ServerAddr string `json:"server_addr"`
-	ServerName string `json:"server_name"`
-	ClientID   string `json:"client_id"`
-	Token      string `json:"token"`
-	CAPEM      string `json:"ca_pem"`
-	Transport  string `json:"transport"`
-	Obfs       string `json:"obfs"`
-	MTU        int    `json:"mtu"`
-	DNS        string `json:"dns"`
+	ServerAddr string          `json:"server_addr"`
+	ServerName string          `json:"server_name"`
+	ClientID   string          `json:"client_id"`
+	Token      string          `json:"token"`
+	TokenTable json.RawMessage `json:"token_table,omitempty"`
+	CAPEM      string          `json:"ca_pem"`
+	Transport  string          `json:"transport"`
+	Obfs       string          `json:"obfs"`
+	MTU        int             `json:"mtu"`
+	DNS        string          `json:"dns"`
+	table      *keytable.Table
 }
 
 func parseConfig(raw string) (config, error) {
@@ -61,8 +64,19 @@ func parseConfig(raw string) (config, error) {
 	if c.ServerName == "" {
 		c.ServerName = host
 	}
-	if c.ClientID == "" || len(c.Token) < 32 {
-		return c, errors.New("client_id and a token of at least 32 characters are required")
+	if c.Transport == "tcp-table" {
+		if c.Obfs != "none" {
+			return c, errors.New("tcp-table requires obfs none")
+		}
+		c.table, err = keytable.Parse(c.TokenTable)
+		if err != nil {
+			return c, err
+		}
+	} else if len(c.Token) < 32 {
+		return c, errors.New("a token of at least 32 characters is required")
+	}
+	if c.ClientID == "" {
+		return c, errors.New("client_id is required")
 	}
 	if c.MTU < 576 || c.MTU > 1400 {
 		return c, errors.New("MTU must be between 576 and 1400")
@@ -76,7 +90,7 @@ func parseConfig(raw string) (config, error) {
 }
 
 func (c config) tlsConfig() (*tls.Config, error) {
-	if c.Transport == "tcp-plain" {
+	if c.Transport == "tcp-plain" || c.Transport == "tcp-table" {
 		return nil, nil
 	}
 	var roots *x509.CertPool

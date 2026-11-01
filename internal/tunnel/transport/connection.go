@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/shikanon/socks5proxy/internal/keytable"
 )
 
 type ControlStream interface {
@@ -110,8 +111,12 @@ func DialTunnelWithControl(ctx context.Context, addr string, cfg *tls.Config, ki
 			return nil, err
 		}
 		return &quicConn{c}, nil
-	case "tcp", "tcp-plain":
-		return dialTCPWithControl(ctx, addr, cfg, kind == "tcp", control)
+	case "tcp", "tcp-plain", "tcp-table":
+		conn, err := dialTCPWithControl(ctx, addr, cfg, kind == "tcp", control)
+		if err == nil && kind == "tcp-table" {
+			conn.(*tcpConn).frameLimit = maxTCPDatagram + keytable.HeaderSize
+		}
+		return conn, err
 	default:
 		return nil, fmt.Errorf("unsupported tunnel transport %q", kind)
 	}
@@ -125,8 +130,12 @@ func ListenTunnel(addr string, cfg *tls.Config, kind string) (Listener, error) {
 			return nil, err
 		}
 		return &quicListener{l}, nil
-	case "tcp", "tcp-plain":
-		return listenTCP(addr, cfg, kind == "tcp")
+	case "tcp", "tcp-plain", "tcp-table":
+		listener, err := listenTCP(addr, cfg, kind == "tcp")
+		if err == nil && kind == "tcp-table" {
+			listener.(*tcpListener).frameLimit = maxTCPDatagram + keytable.HeaderSize
+		}
+		return listener, err
 	default:
 		return nil, fmt.Errorf("unsupported tunnel transport %q", kind)
 	}

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/shikanon/socks5proxy/internal/keytable"
 	"github.com/shikanon/socks5proxy/internal/tunnel"
 	"github.com/shikanon/socks5proxy/internal/tunnel/protocol"
 	"github.com/shikanon/socks5proxy/internal/tunnel/transport"
@@ -49,7 +50,7 @@ func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsC
 	challenge := ""
 	key := sha256.Sum256([]byte(token))
 	obfsKey := token
-	isTCP := kind == "tcp" || kind == "tcp-plain"
+	isTCP := kind == "tcp" || kind == "tcp-plain" || kind == "tcp-table"
 	if isTCP {
 		msg, err := protocol.ReadMessage(stream)
 		if err != nil {
@@ -91,4 +92,13 @@ func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsC
 		return nil, protocol.Message{}, nil, err
 	}
 	return conn, response, cipher, nil
+}
+
+// ConnectTable uses the shared table as the credential and daily data mapping.
+func ConnectTable(ctx context.Context, serverAddr, clientID string, table *keytable.Table, control transport.SocketControl) (transport.Conn, protocol.Message, protocol.Cipher, error) {
+	conn, response, cipher, err := Connect(ctx, serverAddr, clientID, table.Credential(), "none", nil, "tcp-table", control)
+	if err != nil {
+		return nil, protocol.Message{}, nil, err
+	}
+	return transport.WithTable(conn, table), response, cipher, nil
 }

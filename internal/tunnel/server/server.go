@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/shikanon/socks5proxy/internal/keytable"
 	"github.com/shikanon/socks5proxy/internal/tunnel"
 	"github.com/shikanon/socks5proxy/internal/tunnel/device"
 	tunnelnet "github.com/shikanon/socks5proxy/internal/tunnel/network"
@@ -30,6 +31,7 @@ type Server struct {
 	device   device.Device
 	pool     *AddressPool
 	tokens   *TokenStore
+	table    *keytable.Table
 	sessions *sessionTable
 }
 
@@ -49,7 +51,21 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 		log.Printf("limiting tunnel MTU from %d to %d for QUIC datagram capacity", config.MTU, tunnel.DefaultMTU)
 		config.MTU = tunnel.DefaultMTU
 	}
-	tokens, err := LoadTokenStore(config.TokenFile)
+	var table *keytable.Table
+	var tokens *TokenStore
+	var err error
+	if config.Transport == "tcp-table" {
+		var created bool
+		table, created, err = keytable.LoadOrCreate(config.TableFile, config.TableTokenLength)
+		if err == nil {
+			tokens = &TokenStore{hashes: map[string][sha256.Size]byte{
+				config.TableClientID: sha256.Sum256([]byte(table.Credential())),
+			}}
+			log.Printf("token table ready path=%s created=%t client_id=%s", config.TableFile, created, config.TableClientID)
+		}
+	} else {
+		tokens, err = LoadTokenStore(config.TokenFile)
+	}
 	if err != nil {
 		return err
 	}
@@ -61,13 +77,15 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 		return err
 	}
 	var tlsConfig *tls.Config
-	if config.Transport != "tcp-plain" {
+	if config.Transport != "tcp-plain" && config.Transport != "tcp-table" {
 		tlsConfig, err = transport.ServerTLS(config.CertFile, config.KeyFile)
 		if err != nil {
 			return err
 		}
-	} else {
+	} else if config.Transport == "tcp-plain" {
 		log.Print("WARNING: tcp-plain has no packet encryption or integrity; obfuscation is not security")
+	} else {
+		log.Print("tcp-table uses a learning-only daily substitution table; no TLS or packet integrity")
 	}
 	tunDevice, err := device.Create(config.TUNName, config.MTU)
 	if err != nil {
@@ -110,6 +128,7 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 		device:   tunDevice,
 		pool:     pool,
 		tokens:   tokens,
+		table:    table,
 		sessions: newSessionTable(),
 	}
 	var handlers sync.WaitGroup
@@ -144,6 +163,9 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 }
 
 func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
+	if s.config.Transport == "tcp-table" && s.table != nil {
+		conn = transport.WithTable(conn, s.table)
+	}
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	defer conn.CloseWithError(0, "session closed")
@@ -162,7 +184,7 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 	if stream.SetDeadline(deadline) != nil {
 		return
 	}
-	isTCP := s.config.Transport == "tcp" || s.config.Transport == "tcp-plain"
+	isTCP := s.config.Transport == "tcp" || s.config.Transport == "tcp-plain" || s.config.Transport == "tcp-table"
 	challenge := ""
 	if isTCP {
 		challenge, err = protocol.NewNonce()
@@ -178,7 +200,7 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		return
 	}
 	obfs, err := tunnel.NormalizeObfs(request.Obfs)
-	if err != nil || !s.config.ObfsAllow[obfs] {
+	if err != nil || !s.config.ObfsAllow[obfs] || (s.config.Transport == "tcp-table" && obfs != "none") {
 		s.reject(stream)
 		return
 	}
@@ -192,6 +214,10 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		authenticated = len(request.Token) >= 32 && s.tokens.Authenticate(request.ClientID, request.Token)
 	}
 	if !authenticated {
+		s.reject(stream)
+		return
+	}
+	if s.config.Transport == "tcp-table" && s.table == nil {
 		s.reject(stream)
 		return
 	}

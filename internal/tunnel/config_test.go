@@ -25,7 +25,7 @@ func TestTransportConfiguration(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"", "quic"}, {"quic", "quic"}, {" TCP ", "tcp"}, {"tcp-plain", "tcp-plain"}, {"udp", ""},
+		{"", "quic"}, {"quic", "quic"}, {" TCP ", "tcp"}, {"tcp-plain", "tcp-plain"}, {"tcp-table", "tcp-table"}, {"udp", ""},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			got, err := NormalizeTransport(tc.input)
@@ -46,7 +46,7 @@ func TestTransportConfiguration(t *testing.T) {
 			} else if err != nil || server.Transport != tc.want {
 				t.Fatal("incorrect server default", err)
 			}
-			needCertificate := tc.want != "tcp-plain"
+			needCertificate := tc.want != "tcp-plain" && tc.want != "tcp-table"
 			if (server.Validate() != nil) != needCertificate {
 				t.Fatal("wrong certificate requirement")
 			}
@@ -55,6 +55,34 @@ func TestTransportConfiguration(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestTableConfig(t *testing.T) {
+	client := ClientConfig{Transport: "tcp-table", ServerAddr: "127.0.0.1:443", ClientID: "desktop"}
+	client.SetDefaults()
+	if err := client.Validate(); err != nil {
+		t.Fatal("table mode required a long token or TLS", err)
+	}
+	client.Obfs = "random"
+	if err := client.Validate(); err == nil {
+		t.Fatal("double obfuscation accepted")
+	}
+	server := ServerConfig{Transport: "tcp-table", ListenAddr: ":443"}
+	if err := server.SetDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	server.TableTokenLength = 7
+	if err := server.Validate(); err == nil {
+		t.Fatal("short table token accepted")
+	}
+	server.TableTokenLength = 16
+	server.ObfsAllow = map[string]bool{"random": true}
+	if err := server.Validate(); err == nil {
+		t.Fatal("table mode without none accepted")
 	}
 }
 

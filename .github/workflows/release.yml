@@ -26,6 +26,8 @@ jobs:
           cache: true
 
       - name: Build release artifacts
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
         run: bash scripts/build-desktop.sh
 
       - name: Package Wintun for Windows tunnel mode

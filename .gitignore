@@ -25,3 +25,7 @@ apps/ios/*.xcodeproj/
 apps/ios/PacketTunnel/Info.plist
 **/xcuserdata/
 .DS_Store
+
+# Private learning-mode token tables
+token-table.json
+.token-table-*

@@ -18,21 +18,22 @@ import (
 const maxTCPDatagram = 1402
 
 type tcpConn struct {
-	wire      net.Conn
-	raw       net.Conn
-	ctx       context.Context
-	cancel    context.CancelCauseFunc
-	closeOnce sync.Once
-	startOnce sync.Once
-	control   atomic.Bool
-	started   atomic.Bool
-	writeMu   sync.Mutex
-	readMu    sync.Mutex
+	wire       net.Conn
+	raw        net.Conn
+	ctx        context.Context
+	cancel     context.CancelCauseFunc
+	closeOnce  sync.Once
+	startOnce  sync.Once
+	control    atomic.Bool
+	started    atomic.Bool
+	writeMu    sync.Mutex
+	readMu     sync.Mutex
+	frameLimit int
 }
 
 func newTCPConn(wire, raw net.Conn) *tcpConn {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	return &tcpConn{wire: wire, raw: raw, ctx: ctx, cancel: cancel}
+	return &tcpConn{wire: wire, raw: raw, ctx: ctx, cancel: cancel, frameLimit: maxTCPDatagram}
 }
 
 func tcpTLSConfig(cfg *tls.Config, client bool) (*tls.Config, error) {
@@ -78,7 +79,8 @@ func dialTCPWithControl(ctx context.Context, addr string, cfg *tls.Config, secur
 
 type tcpListener struct {
 	net.Listener
-	tlsConfig *tls.Config
+	tlsConfig  *tls.Config
+	frameLimit int
 }
 
 func listenTCP(addr string, cfg *tls.Config, secure bool) (Listener, error) {
@@ -95,7 +97,7 @@ func listenTCP(addr string, cfg *tls.Config, secure bool) (Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tcpListener{Listener: l, tlsConfig: cfg}, nil
+	return &tcpListener{Listener: l, tlsConfig: cfg, frameLimit: maxTCPDatagram}, nil
 }
 
 func (l *tcpListener) Accept(ctx context.Context) (Conn, error) {
@@ -121,7 +123,9 @@ func (l *tcpListener) Accept(ctx context.Context) (Conn, error) {
 		wire = tls.Server(raw, l.tlsConfig)
 	}
 	// TLS runs in AcceptControl, so a stalled handshake cannot block Accept.
-	return newTCPConn(wire, raw), nil
+	conn := newTCPConn(wire, raw)
+	conn.frameLimit = l.frameLimit
+	return conn, nil
 }
 
 func (c *tcpConn) Context() context.Context { return c.ctx }
@@ -226,8 +230,12 @@ func (c *tcpConn) startData() error {
 }
 
 func writeFrame(w io.Writer, payload []byte) error {
-	if len(payload) > maxTCPDatagram {
-		return errors.New("TCP tunnel packet exceeds 1402 bytes")
+	return writeFrameLimit(w, payload, maxTCPDatagram)
+}
+
+func writeFrameLimit(w io.Writer, payload []byte, limit int) error {
+	if len(payload) > limit {
+		return errors.New("TCP tunnel packet exceeds frame limit")
 	}
 	frame := make([]byte, 2+len(payload))
 	binary.BigEndian.PutUint16(frame, uint16(len(payload)))
@@ -254,7 +262,7 @@ func (c *tcpConn) sendFrame(payload []byte) error {
 	if err := c.wire.SetWriteDeadline(time.Now().Add(handshakeTimeout)); err != nil {
 		return c.fail(err)
 	}
-	if err := writeFrame(c.wire, payload); err != nil {
+	if err := writeFrameLimit(c.wire, payload, c.frameLimit); err != nil {
 		return c.fail(err)
 	}
 	return nil
@@ -264,7 +272,7 @@ func (c *tcpConn) SendDatagram(payload []byte) error {
 	if !c.started.Load() {
 		return errors.New("TCP packet mode has not started")
 	}
-	if len(payload) == 0 || len(payload) > maxTCPDatagram {
+	if len(payload) == 0 || len(payload) > c.frameLimit {
 		return errors.New("invalid TCP tunnel packet size")
 	}
 	return c.sendFrame(payload)
@@ -290,7 +298,7 @@ func (c *tcpConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 			return nil, c.fail(err)
 		}
 		size := int(binary.BigEndian.Uint16(header[:]))
-		if size > maxTCPDatagram {
+		if size > c.frameLimit {
 			return nil, c.fail(errors.New("oversized TCP tunnel frame"))
 		}
 		if size == 0 {

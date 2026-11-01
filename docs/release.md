@@ -21,6 +21,16 @@ chmod +x socks5proxy_client_linux_amd64
 
 macOS 替换为相应 darwin 文件名。Windows 解压 ZIP 后运行 EXE；仅使用应用代理不需要管理员权限，TUN 需要管理员/root 权限。[应用代理及同机示例](proxy.md)、[全局隧道](tunnel.md)、[问题排查](troubleshooting.md)分别覆盖不同模式。
 
+Apple Silicon（M1/M2/M3/M4 等）使用 `darwin_arm64`，不需要 Rosetta。从 [v0.2.0](https://github.com/shikanon/socks5proxy/releases/tag/v0.2.0) 下载 `socks5proxy_client_darwin_arm64` 与 `SHA256SUMS`，按下文校验后运行：
+
+```bash
+chmod +x socks5proxy_client_darwin_arm64
+./socks5proxy_client_darwin_arm64 -version
+./socks5proxy_client_darwin_arm64 -h
+```
+
+`-version` 输出发布版本；源码直接 `go build` 默认输出 `dev`。应用代理和全局 TUN 的[启动命令](proxy-scopes.md)使用同一客户端二进制。macOS 二进制没有 Apple 公证；如系统提示阻止运行，核对来源与 checksum 后在“隐私与安全性”中处理该文件的运行许可。
+
 所需目标尚未发布时，使用匹配 `go.mod` 的 Go 工具链从源码构建：
 
 ```bash
@@ -62,6 +72,12 @@ Windows 全局隧道应使用 ZIP 包并保持 DLL 与 EXE 位于同一目录。
 ARM64 ZIP 包使用 ARM64 EXE 和 ARM64 Wintun DLL。不要混用不同架构的 DLL。
 
 本地可运行 `bash scripts/build-desktop.sh` 构建相同的六种客户端目标及 Linux/Windows 服务端；产物位于 `dist/`。Wintun ZIP 的打包和校验在 Release workflow 中执行。
+
+发布前可在独立目录本地构建，避免混入旧的 `dist/` 产物：
+
+```bash
+VERSION=v0.2.0 OUTPUT_DIR="$PWD/dist/v0.2.0-local" bash scripts/build-desktop.sh
+```
 
 ## 移动构建物
 

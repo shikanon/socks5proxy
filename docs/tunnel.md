@@ -9,6 +9,9 @@
 | `quic`（默认） | UDP / QUIC DATAGRAM | TLS 1.3 |
 | `tcp` | TCP 长连接，按长度封装 IP 包 | TLS 1.3，严格验证证书和 ALPN |
 | `tcp-plain` | 同样的 TCP 长连接及封包 | 显式无加密、无数据完整性 |
+| `tcp-table` | TCP 长连接，UTC 日期 + 每日字节替换 | 无需 TLS 的学习用令牌表，无数据完整性 |
+
+`tcp-table` 由服务端自动生成 256 项、每项 8–16 位的随机令牌表，两端共享该文件，结合 UTC 当日零点时间戳生成每日数据映射。它支持同一套 TUN 全局路由、TCP/UDP/ICMP/DNS、NAT 和断线重连；不需要证书或额外长令牌。启动与表文件同步见[每日令牌表隧道](token-table.md)。
 
 UDP 线路丢包严重时可尝试 `tcp`。关闭 TLS 是否更快需要同条件重复测量；对网络受限的传输，TLS 开销通常不是主要瓶颈。TCP 外层丢包会暂停其后所有 IP 包，并可能与内层 TCP 重传叠加，因此也不保证适合所有线路。
 
@@ -16,7 +19,7 @@ UDP 线路丢包严重时可尝试 `tcp`。关闭 TLS 是否更快需要同条�
 
 - 服务端：Linux、root 或 `CAP_NET_ADMIN`、可用的 `ip`、`iptables` 和 `sysctl`。
 - 客户端：Linux root、macOS 或 Windows 管理员权限。Linux 需要 `ip`、运行中的 `systemd-resolved`、`resolvectl`，以及使用 resolved stub（127.0.0.53/54）的 `/etc/resolv.conf`。
-- 网络：`quic` 需要服务端 UDP 端口；`tcp` / `tcp-plain` 需要 TCP 端口。两端必须选择相同后端。
+- 网络：`quic` 需要服务端 UDP 端口；`tcp` / `tcp-plain` / `tcp-table` 需要 TCP 端口。两端必须选择相同后端。
 - Windows：`wintun.dll` 必须与客户端 EXE 位于同一目录。Release 中的 Windows ZIP 已包含它。
 - 当前隧道仅承载 IPv4；macOS/Windows 运行期间会阻断公网和 ULA IPv6。Linux 尚未自动阻断 IPv6，需要在宿主网络中另行禁用或限制 IPv6。
 
@@ -42,7 +45,7 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key \
 ```
 
 客户端的 `-server-name` 必须匹配证书中的 DNS 名称或 IP SAN。不要分发 `ca.key` 或 `server.key`。
-`tcp-plain` 不加载证书；`tcp` 始终使用 TLS，不会因缺少证书或握手失败而改用明文。
+`tcp-plain` 和 `tcp-table` 不加载证书；`tcp` 始终使用 TLS，不会因缺少证书或握手失败而改用其他模式。下面的长令牌准备流程用于 `quic` / `tcp` / `tcp-plain`；`tcp-table` 直接使用共享令牌表。
 
 ## 准备客户端令牌
 
@@ -60,7 +63,7 @@ chmod 600 clients.tokens
 客户端保存令牌原文，服务端只保存 SHA-256 摘要。不要在命令行直接传递令牌。
 计算摘要时必须排除令牌文件末尾的换行；直接对 `desktop.token` 文件运行 `sha256sum` 会把换行计入摘要，导致认证失败。
 
-两个 TCP 后端共用三步认证：服务端 32 字节随机挑战，客户端随机 nonce 和 HMAC-SHA256 证明，服务端签名认证响应。证明绑定混淆模式和下发的 IP、DNS、MTU、会话参数，拒绝旧挑战重放。线路上不会直接发送长期令牌或其摘要。服务端摘要是 TCP 认证的等价凭据，必须像令牌一样保护。
+TCP 后端共用三步认证：服务端 32 字节随机挑战，客户端随机 nonce 和 HMAC-SHA256 证明，服务端签名认证响应。证明绑定混淆模式和下发的 IP、DNS、MTU、会话参数，拒绝旧挑战重放。线路上不会直接发送长期令牌、令牌表或摘要。服务端摘要是 TCP 认证的等价凭据，必须像令牌一样保护。
 
 ## 启动 Linux 服务端
 
@@ -158,7 +161,7 @@ QUIC DATAGRAM 或 TCP 长度封包 -> simple/random 还原（可选）-> IP 包
 
 ## 使用 TCP 后端
 
-将上述服务端和客户端命令都添加 `-transport tcp`，并设置可用 TCP 端口，例如 `-local :1443` / `-server vpn.example.com:1443`。其他令牌、证书、TUN、DNS、NAT 参数保持相同。`-obfs random` 可同时用于三个后端。
+将上述服务端和客户端命令都添加 `-transport tcp`，并设置可用 TCP 端口，例如 `-local :1443` / `-server vpn.example.com:1443`。其他令牌、证书、TUN、DNS、NAT 参数保持相同。`-obfs random` 可用于 `quic` / `tcp` / `tcp-plain`；`tcp-table` 必须使用 `-obfs none`。
 
 测试无 TLS 性能时，在两端显式选择 `-transport tcp-plain`，并使用独立的随机测试令牌及服务端摘要文件。此模式不需要 `-cert` / `-key` / `-ca` / `-server-name`。启动日志会提示无加密；随机混淆不阻止监听、数据篡改或主动中继，认证证明也不为后续 IP 包提供完整性。
 

@@ -99,7 +99,7 @@ func (c *Client) Connect() (string, error) {
 	}
 	endpoint := addrs[0].Unmap().String()
 	dialAddr := net.JoinHostPort(endpoint, port)
-	conn, response, cipher, err := session.Connect(c.ctx, dialAddr, c.config.ClientID, c.config.Token, c.config.Obfs, c.tls, c.config.Transport, c.control)
+	conn, response, cipher, err := c.connectSession(dialAddr)
 	if err != nil {
 		c.fail(err)
 		return "", err
@@ -120,6 +120,13 @@ func (c *Client) Connect() (string, error) {
 	c.state = "ready"
 	raw, _ := json.Marshal(p)
 	return string(raw), nil
+}
+
+func (c *Client) connectSession(addr string) (transport.Conn, protocol.Message, protocol.Cipher, error) {
+	if c.config.table != nil {
+		return session.ConnectTable(c.ctx, addr, c.config.ClientID, c.config.table, c.control)
+	}
+	return session.Connect(c.ctx, addr, c.config.ClientID, c.config.Token, c.config.Obfs, c.tls, c.config.Transport, c.control)
 }
 
 // Start begins relaying after the caller has configured the native VPN.
@@ -234,7 +241,7 @@ func (c *Client) run(conn transport.Conn, cipher protocol.Cipher) {
 			case <-timer.C:
 			}
 			var response protocol.Message
-			conn, response, cipher, err = session.Connect(c.ctx, c.dialAddr, c.config.ClientID, c.config.Token, c.config.Obfs, c.tls, c.config.Transport, c.control)
+			conn, response, cipher, err = c.connectSession(c.dialAddr)
 			if err != nil {
 				c.mu.Lock()
 				if c.ctx.Err() == nil {

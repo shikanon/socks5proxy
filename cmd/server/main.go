@@ -3,19 +3,23 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/shikanon/socks5proxy"
+	"github.com/shikanon/socks5proxy/internal/buildinfo"
+	"github.com/shikanon/socks5proxy/internal/keytable"
 	"github.com/shikanon/socks5proxy/internal/tunnel"
 	tunnelserver "github.com/shikanon/socks5proxy/internal/tunnel/server"
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	mode := flag.String("mode", "proxy", "Run mode: proxy or tunnel")
-	transportMode := flag.String("transport", "quic", "Tunnel transport: quic, tcp (TLS), or tcp-plain (unencrypted)")
+	transportMode := flag.String("transport", "quic", "Tunnel transport: quic, tcp (TLS), tcp-plain, or tcp-table (daily substitution, no TLS)")
 	listenAddr := flag.String("local", ":18888", "Proxy server listen address")
 	maxConnections := flag.Int("max-connections", 256, "Maximum simultaneous proxy sessions")
 	dialTimeout := flag.Duration("dial-timeout", 10*time.Second, "Proxy destination dial timeout")
@@ -26,6 +30,9 @@ func main() {
 	certFile := flag.String("cert", "", "Path to tunnel TLS certificate")
 	keyFile := flag.String("key", "", "Path to tunnel TLS private key")
 	tokenFile := flag.String("token-file", "", "Path to client token digest file")
+	tableFile := flag.String("table-file", keytable.DefaultFile, "Shared token table JSON; tcp-table server generates it if absent")
+	tableTokenLength := flag.Int("table-token-length", keytable.DefaultTokenLength, "Generated table token length (8-16 characters)")
+	tableClientID := flag.String("client-id", "desktop", "Authorized client identifier for tcp-table")
 	tunnelCIDR := flag.String("tunnel-cidr", tunnel.DefaultTunnelCIDR, "Tunnel IPv4 CIDR")
 	dns := flag.String("dns", tunnel.DefaultDNS, "Tunnel DNS IPv4 address")
 	mtu := flag.Int("mtu", tunnel.DefaultMTU, "Tunnel MTU (576-1400)")
@@ -35,6 +42,10 @@ func main() {
 	tunName := flag.String("tun-name", "socks5tun0", "Tunnel interface name")
 	stateDir := flag.String("state-dir", "", "Directory for recoverable network state")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(buildinfo.Version)
+		return
+	}
 
 	switch *mode {
 	case "proxy":
@@ -63,6 +74,9 @@ func main() {
 			CertFile:          *certFile,
 			KeyFile:           *keyFile,
 			TokenFile:         *tokenFile,
+			TableFile:         *tableFile,
+			TableTokenLength:  *tableTokenLength,
+			TableClientID:     *tableClientID,
 			TunnelCIDR:        *tunnelCIDR,
 			DNS:               *dns,
 			MTU:               *mtu,

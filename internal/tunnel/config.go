@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"runtime"
 	"strings"
+
+	"github.com/shikanon/socks5proxy/internal/keytable"
 )
 
 const (
@@ -23,6 +25,7 @@ type ClientConfig struct {
 	ServerAddr   string
 	ClientID     string
 	TokenFile    string
+	TableFile    string
 	CAFile       string
 	ServerName   string
 	DNS          string
@@ -39,6 +42,9 @@ type ServerConfig struct {
 	CertFile          string
 	KeyFile           string
 	TokenFile         string
+	TableFile         string
+	TableTokenLength  int
+	TableClientID     string
 	TunnelCIDR        string
 	DNS               string
 	MTU               int
@@ -55,7 +61,7 @@ func NormalizeTransport(mode string) (string, error) {
 		mode = "quic"
 	}
 	switch mode {
-	case "quic", "tcp", "tcp-plain":
+	case "quic", "tcp", "tcp-plain", "tcp-table":
 		return mode, nil
 	default:
 		return "", fmt.Errorf("unsupported tunnel transport %q", mode)
@@ -100,6 +106,9 @@ func (c *ClientConfig) SetDefaults() {
 	if c.Obfs == "" {
 		c.Obfs = "none"
 	}
+	if c.Transport == "tcp-table" && c.TableFile == "" {
+		c.TableFile = keytable.DefaultFile
+	}
 	if c.TUNName == "" {
 		switch runtime.GOOS {
 		case "darwin":
@@ -113,7 +122,8 @@ func (c *ClientConfig) SetDefaults() {
 }
 
 func (c ClientConfig) Validate() error {
-	if _, err := NormalizeTransport(c.Transport); err != nil {
+	mode, err := NormalizeTransport(c.Transport)
+	if err != nil {
 		return err
 	}
 	if c.ServerAddr == "" {
@@ -125,7 +135,14 @@ func (c ClientConfig) Validate() error {
 	if strings.TrimSpace(c.ClientID) == "" {
 		return errors.New("client ID is required")
 	}
-	if strings.TrimSpace(c.TokenFile) == "" {
+	if mode == "tcp-table" {
+		if strings.TrimSpace(c.TableFile) == "" {
+			return errors.New("client table file is required")
+		}
+		if obfs, err := NormalizeObfs(c.Obfs); err != nil || obfs != "none" {
+			return errors.New("tcp-table requires -obfs none; daily mapping is built in")
+		}
+	} else if strings.TrimSpace(c.TokenFile) == "" {
 		return errors.New("client token file is required")
 	}
 	if err := validateMTU(c.MTU); err != nil {
@@ -148,6 +165,17 @@ func (c *ServerConfig) SetDefaults() error {
 		return err
 	}
 	c.Transport = mode
+	if mode == "tcp-table" {
+		if c.TableFile == "" {
+			c.TableFile = keytable.DefaultFile
+		}
+		if c.TableTokenLength == 0 {
+			c.TableTokenLength = keytable.DefaultTokenLength
+		}
+		if c.TableClientID == "" {
+			c.TableClientID = "desktop"
+		}
+	}
 	if c.MTU == 0 {
 		c.MTU = DefaultMTU
 	}
@@ -181,10 +209,20 @@ func (c ServerConfig) Validate() error {
 	if _, _, err := net.SplitHostPort(c.ListenAddr); err != nil {
 		return fmt.Errorf("invalid tunnel listen address: %w", err)
 	}
-	if mode != "tcp-plain" && (c.CertFile == "" || c.KeyFile == "") {
+	if mode != "tcp-plain" && mode != "tcp-table" && (c.CertFile == "" || c.KeyFile == "") {
 		return errors.New("TLS certificate and key files are required")
 	}
-	if c.TokenFile == "" {
+	if mode == "tcp-table" {
+		if strings.TrimSpace(c.TableFile) == "" || strings.TrimSpace(c.TableClientID) == "" {
+			return errors.New("server table file and table client ID are required")
+		}
+		if c.TableTokenLength < 8 || c.TableTokenLength > 16 {
+			return errors.New("table token length must be between 8 and 16")
+		}
+		if !c.ObfsAllow["none"] {
+			return errors.New("tcp-table requires none in -obfs-allow")
+		}
+	} else if c.TokenFile == "" {
 		return errors.New("server token file is required")
 	}
 	if err := validateMTU(c.MTU); err != nil {

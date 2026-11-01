@@ -40,6 +40,11 @@ jobs:
           python3 scripts/test-proxy-resources.py \
             --client /tmp/socks5proxy-client --server /tmp/socks5proxy-server
 
+      - name: Check application routing and PAC
+        run: |
+          python3 scripts/test-proxy-scopes.py \
+            --client /tmp/socks5proxy-client --server /tmp/socks5proxy-server
+
       - name: Run Linux TUN integration test
         run: |
           set +e
@@ -54,7 +59,7 @@ jobs:
 
       - name: Run staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
           staticcheck ./...
 
   cross-build:

@@ -1,0 +1,5 @@
+# One website host pattern per line. Restart the client after editing.
+# *.example.org includes example.org and every depth of subdomain.
+example.com
+*.example.org
+api?.example.net

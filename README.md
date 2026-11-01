@@ -13,8 +13,8 @@
 
 项目同时支持两种运行模式：
 
-- `proxy`：HTTP/SOCKS5 TCP 应用代理，支持 HTTP 转发、HTTPS CONNECT 和 `simple` / `random` 流量混淆。
-- `tunnel`：Linux/macOS/Windows 全局 IPv4 TUN，以及 Android VpnService / iOS Packet Tunnel 原生客户端，默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）或显式无加密 TCP（`-transport tcp-plain`），支持 `none` / `simple` / `random` 混淆。
+- `proxy`：HTTP/SOCKS5 TCP 应用代理，支持 HTTP 转发、HTTPS CONNECT、全代理/网站规则分流（`*`、`?` 通配符）、PAC，以及 `simple` / `random` 流量混淆。
+- `tunnel`：Linux/macOS/Windows 全局 IPv4 TUN，以及 Android VpnService / iOS Packet Tunnel 原生客户端，默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）、显式无加密 TCP（`-transport tcp-plain`），或无需 TLS 的每日令牌替换表（`-transport tcp-table`）。后者使用服务端自动生成的 8–16 位随机令牌表与 UTC 当日时间戳，详见[令牌表隧道](./docs/token-table.md)。
 
 ## 客户端平台
 
@@ -32,7 +32,8 @@
 
 - 当前 `simple` / `random` 仅用于流量混淆，不是安全加密，也不提供现代意义上的机密性、完整性或重放防护。
 - 全局隧道默认 `quic`，以及可选的 `tcp`，使用 TLS 1.3；不会自动降级为明文。`tcp-plain` 不提供 IP 包机密性或完整性，即使使用 `random` 也是如此。
-- 两个 TCP 后端使用新鲜随机挑战和 HMAC 认证，线路上传输认证证明，不直接发送令牌或摘要。摘要本身等价于 TCP 认证凭据，应保密；明文模式仍可被监听、篡改或中继，应使用独立测试令牌。
+- `tcp-table` 是学习用的每日字节替换，不依赖 TLS；令牌表默认保存为 `token-table.json`，已有表会复用。它不提供现代密码学意义上的机密性、数据完整性或重放防护。
+- TCP 后端使用新鲜随机挑战和 HMAC 认证，线路上传输认证证明，不直接发送令牌、令牌表或摘要。摘要本身等价于 TCP 认证凭据，应保密；学习测试应使用独立令牌或令牌表。
 - 不要把 `simple` / `random` 当作 TLS、SSH、WireGuard 或 AEAD 安全通道的替代品。
 - `proxy` 密码最终只影响至多 256 张替换表，长密码不能提升其密码学强度。本地监听无用户认证，默认只绑定 `127.0.0.1:8888`；服务端没有目标地址 ACL，部署时应限制访问来源和出口。
 - TLS 隧道保护客户端至服务端这一段；服务端仍可看到解封装的流量。目标站点的数据保护依赖 HTTPS 等端到端协议。完整边界见[安全与威胁模型](./docs/security.md)。
@@ -56,9 +57,11 @@ apps/ios/          `iOS 原生应用与 Packet Tunnel 扩展`
 - [SOCKS5协议介绍](./docs/socks5.md)
 - [流量混淆算法介绍](./docs/cryptogram.md)
 - [全局加密隧道部署](./docs/tunnel.md)
+- [无需 TLS 的每日令牌表与 TUN 隧道](./docs/token-table.md)
 - [软件下载及版本说明](./docs/release.md)
 - [Android / iOS 构建与使用](./docs/mobile-clients.md)
 - [应用代理与同机部署](./docs/proxy.md)
+- [全局代理、指定网站与通配符规则](./docs/proxy-scopes.md)
 - [安全与威胁模型](./docs/security.md)
 - [连接、资源与网络排障](./docs/troubleshooting.md)
 
@@ -83,6 +86,17 @@ curl --noproxy "" --proxy http://127.0.0.1:8888 https://example.com/
 浏览器设置 HTTP/HTTPS 代理为 `127.0.0.1:8888`。若客户端改为 `-recv socks5`，浏览器也必须选择 SOCKS5，curl 使用 `--proxy socks5h://127.0.0.1:8888`。代理目标不能指回这两个监听端口。跨机器部署时，客户端的 `-server` 改为服务端地址；完整说明见[应用代理部署](./docs/proxy.md)。
 
 `-passwd` **没有默认值，必须显式设置**；`-type` 默认 `random`，两端必须相同。客户端 `-recv` 默认 `http`。应用代理只处理主动配置代理的应用；全局 IPv4 流量请使用[隧道模式](./docs/tunnel.md)。
+
+只让指定网站走远程代理，其余直连：
+
+```bash
+go run ./cmd/client -mode proxy -server 127.0.0.1:18888 \
+  -type random -passwd demo-only -recv http \
+  -proxy-scope rules -proxy-domains 'example.com,*.example.org' \
+  -pac-listen 127.0.0.1:8090
+```
+
+浏览器手动代理设为 `127.0.0.1:8888`，或自动代理配置 URL 设为 `http://127.0.0.1:8090/proxy.pac`。可通过 `-rules-file examples/proxy-domains.txt` 加载规则。完整[分流与全局模式说明](./docs/proxy-scopes.md)包含 macOS 启动命令及 HTTPS/IPv6 范围。
 
 两端 proxy 模式均支持以下资源参数：
 

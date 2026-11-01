@@ -49,6 +49,21 @@ def read_full(sock, size):
     return data
 
 
+def send_refusal_request(sock, legacy):
+    if not legacy:
+        # Routing now reads the destination before dialing the remote.
+        # Send a complete pipelined SOCKS CONNECT so this still tests a failed
+        # upstream dial, rather than the incomplete-handshake timeout.
+        sock.sendall(bytes([5, 1, 0, 5, 1, 0, 1, 127, 0, 0, 1, 0, 80]))
+
+
+def read_refusal(sock, legacy):
+    if not legacy:
+        assert read_full(sock, 2) == b"\x05\x00"
+        assert read_full(sock, 10)[1] != 0, "upstream failure returned success"
+    assert sock.recv(1) == b"", "failed dial left local socket open"
+
+
 def start(binary, arguments, limit, log):
     def set_limit():
         resource.setrlimit(resource.RLIMIT_NOFILE, (limit, limit))
@@ -129,10 +144,12 @@ def main():
             held = []
             try:
                 for _ in range(min(args.iterations, args.limit - 16)):
-                    held.append(socket.create_connection(local, timeout=1))
+                    sock = socket.create_connection(local, timeout=1)
+                    held.append(sock)
+                    send_refusal_request(sock, args.legacy)
                     time.sleep(0.002)
                     peak = max(peak, fd_count(client))
-                time.sleep(0.2)
+                eventually(lambda: fd_count(client) <= baseline + 4)
                 retained = fd_count(client)
                 report["upstream_refusal"] = {"before": baseline, "peak": peak, "after_held_peers": retained}
                 # Peer sockets deliberately remain open: GC and remote closure
@@ -140,14 +157,15 @@ def main():
                 assert retained <= baseline + 4, report
                 for sock in held:
                     sock.settimeout(1)
-                    assert sock.recv(1) == b"", "failed dial left local socket open"
+                    read_refusal(sock, args.legacy)
             finally:
                 for sock in held:
                     sock.close()
             for _ in range(args.iterations):
                 with socket.create_connection(local, timeout=1) as sock:
                     sock.settimeout(1)
-                    assert sock.recv(1) == b""
+                    send_refusal_request(sock, args.legacy)
+                    read_refusal(sock, args.legacy)
             eventually(lambda: fd_count(client) <= baseline + 2)
             report["upstream_refusal"]["after"] = fd_count(client)
             stop(client)
