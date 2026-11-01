@@ -1,6 +1,6 @@
 # 全局加密隧道
 
-全局隧道通过 Linux TUN、macOS `utun` 或 Windows Wintun 接管默认 IPv4 流量，传输到 Linux 服务端，再通过 Linux 转发和 NAT 访问目标网络。TCP、UDP、ICMP 和 DNS 都通过同一个 IP 隧道承载。
+全局隧道通过 Linux TUN、macOS `utun` 或 Windows Wintun 接管默认 IPv4 流量；两端启用 `-ipv6` 后同时接管默认 IPv6 流量。IP 包传输到 Linux 服务端，再通过 Linux 转发和 NAT 访问目标网络。TCP、UDP、ICMP/ICMPv6 和 DNS 都通过同一个 IP 隧道承载。
 
 默认保持 QUIC + TLS 1.3。`simple` / `random` 仅是可选流量混淆，不提供加密安全性；默认 `-obfs none`。
 
@@ -21,7 +21,8 @@ UDP 线路丢包严重时可尝试 `tcp`。关闭 TLS 是否更快需要同条�
 - 客户端：Linux root、macOS 或 Windows 管理员权限。Linux 需要 `ip`、运行中的 `systemd-resolved`、`resolvectl`，以及使用 resolved stub（127.0.0.53/54）的 `/etc/resolv.conf`。
 - 网络：`quic` 需要服务端 UDP 端口；`tcp` / `tcp-plain` / `tcp-table` 需要 TCP 端口。两端必须选择相同后端。
 - Windows：`wintun.dll` 必须与客户端 EXE 位于同一目录。Release 中的 Windows ZIP 已包含它。
-- 当前隧道仅承载 IPv4；macOS/Windows 运行期间会阻断公网和 ULA IPv6。Linux 尚未自动阻断 IPv6，需要在宿主网络中另行禁用或限制 IPv6。
+- 双栈服务端还需要 `ip6tables`、内核 IPv6/NAT 支持和可用的 IPv6 出口路由。隧道承载 IPv6 不要求外层连接也使用 IPv6，可以连接 IPv4 服务端地址。
+- 默认 IPv4 模式保持原行为：macOS/Windows 运行期间阻断公网和 ULA IPv6，Linux 需要自行禁用或限制 IPv6。启用双栈后安装 IPv6 路由，不再应用这些 IPv6 阻断规则。
 
 ## 准备 TLS 证书
 
@@ -92,10 +93,60 @@ sudo ./socks5proxy_server_linux_amd64 \
 
 已有防火墙和 NAT 管理系统时，使用 `-manage-network=false`，并自行配置：
 
-- `socks5tun0` 的地址和链路状态。
 - 隧道 CIDR 的双向 FORWARD。
 - 隧道 CIDR 到出口网卡的 MASQUERADE。
 - `net.ipv4.ip_forward=1`。
+
+此选项仍由程序配置 TUN 地址、MTU 和链路状态，仅跳过转发 sysctl 与防火墙/NAT 管理。
+
+## 启用 IPv4 + IPv6 双栈
+
+在前述令牌、CA 和证书准备完成后，Linux 服务端示例：
+
+```bash
+sudo ./socks5proxy_server_linux_amd64 \
+  -mode tunnel -ipv6 \
+  -local :443 -cert ./server.crt -key ./server.key \
+  -token-file ./clients.tokens \
+  -outbound-interface eth0 \
+  -tunnel-cidr6 fd00:5:5::/64 \
+  -dns6 2606:4700:4700::1111
+```
+
+macOS Apple Silicon 客户端示例：
+
+```bash
+sudo ./socks5proxy_client_darwin_arm64 \
+  -mode tunnel -ipv6 \
+  -server vpn.example.com:443 -server-name vpn.example.com \
+  -ca ./ca.crt -client-id desktop -token-file ./desktop.token
+```
+
+Linux/Windows 客户端使用相同参数；移动端勾选界面的 IPv6 开关。两端可同时添加 `-transport tcp`，或使用 `tcp-table` 的共享表认证方式并添加 `-ipv6`。双栈支持四种 tunnel 传输；`tcp-plain` / `tcp-table` 的安全边界不变。
+
+| 参数 | 默认值 / 要求 |
+| --- | --- |
+| 两端 `-ipv6` | 默认关闭；客户端请求后，服务端必须支持，否则在安装路由前失败 |
+| 服务端 `-tunnel-cidr6` | `fd00:5:5::/64`；网络地址必须对齐，前缀长度 64–96，允许 ULA 或全局单播 |
+| 服务端 `-dns6` | `2606:4700:4700::1111` |
+| 客户端 `-dns6` | 可覆盖服务端下发的 IPv6 DNS；必须同时启用 IPv6 |
+| 双栈 `-mtu` | 默认 1280，允许 1280–1400；IPv4 模式默认仍为 1150 |
+
+IPv6 地址从稳定的 IPv4 租约偏移派生，默认服务端地址为 `fd00:5:5::1`；源地址必须匹配当前客户端租约。IPv6 不会转换成 IPv4：访问 IPv6 目标时，服务端出口必须能访问该目标地址。部署前检查：
+
+```bash
+ip -6 addr show dev eth0
+ip -6 route show default
+curl -6 --noproxy '*' https://example.com/
+```
+
+默认网络管理为隧道前缀添加窄范围 `ip6tables` FORWARD 与 MASQUERADE（NAT66），并启用 `net.ipv6.conf.all.forwarding`。若出口的 `accept_ra=1`，程序先改为 2，使转发开启后仍可接收 RA；停止时恢复原值、转发状态和自身规则。既有更早的 DROP 规则仍可能阻止转发。
+
+使用运营商/上游明确路由到服务器的独立 IPv6 前缀时，可通过 `-manage-network=false -tunnel-cidr6 YOUR_ROUTED_PREFIX` 改为外部管理：自行配置 IPv4/IPv6 forwarding、防火墙，以及上游到隧道前缀的回程路由；IPv6 可不使用 NAT66。不要把普通出口网卡的同网段直接用作隧道前缀，除非另外正确配置上游路由或 NDP。
+
+服务器地址可为 IPv4、域名或带方括号的 IPv6，例如 `-server '[2001:db8::10]:443'`；示例文档地址须替换为实际地址。客户端优先选择域名的 IPv4 结果，无 IPv4 时使用 IPv6，并为外层端点保留物理出口的 `/32` 或 `/128` 路由。重连复用该地址；端点 DNS 变更需重新连接。TLS 仍需正确的 DNS/IP SAN。
+
+双栈桌面客户端安装 IPv4 和 IPv6 各两个 `/1` 路由，已有更具体的局域网/主机路由仍优先。断线时保留双栈路由并重连，正常停止时恢复两种地址族的路由与 DNS。
 
 ## 启动 macOS 客户端
 
@@ -116,7 +167,7 @@ Intel Mac 使用 `socks5proxy_client_darwin_amd64`。
 
 使用与 macOS 相同的参数运行 `socks5proxy_client_linux_amd64`。
 客户端在 TUN 上设置服务端下发的 DNS 和 `~.` 路由域，并清空旧缓存；正常停止时撤销 TUN DNS 并再次清空缓存，物理网卡 DNS 保持原设置。
-`-dns` 可覆盖服务端下发的 IPv4 DNS。
+`-dns` 可覆盖服务端下发的 IPv4 DNS，双栈时 `-dns6` 可覆盖 IPv6 DNS；两种 DNS 都通过 TUN 配置。
 
 不使用 systemd-resolved 的环境需要自行配置隧道 DNS，再使用 `-linux-dns=false`。
 网络 namespace 集成测试也必须使用此参数，避免 namespace 中的 `resolvectl` 通过共享 D-Bus 修改宿主 DNS。
@@ -167,7 +218,7 @@ QUIC DATAGRAM 或 TCP 长度封包 -> simple/random 还原（可选）-> IP 包
 
 TCP 控制认证总预算为 10 秒，完成后转入双向 IP 封包模式。2 字节网络序长度后接完整数据报，最大 1402 字节；零长度为内部心跳，不会写入 TUN。每 15 秒发送心跳，接收空闲 45 秒、单次写入 10 秒超时后关闭连接并重连。旧转发线程结束后才启用新连接，停止时沿用原网络恢复流程。
 
-QUIC 和 TCP 可由不同进程同时监听，但每个实例需要独立的端口、`-tun-name`、`-tunnel-cidr` 和 `-state-dir`。多个实例共用宿主网络时，应由统一的网络管理配置转发/NAT（实例使用 `-manage-network=false`），避免各自恢复全局 `ip_forward` 状态。
+QUIC 和 TCP 可由不同进程同时监听，但每个实例需要独立的端口、`-tun-name`、`-tunnel-cidr`、双栈 `-tunnel-cidr6` 和 `-state-dir`。多个实例共用宿主网络时，应由统一的网络管理配置转发/NAT（实例使用 `-manage-network=false`），避免各自恢复全局转发状态。
 
 传统 `-mode proxy -recv socks5 -type random` 仅代理应用流量，可作为性能对照。它不接管系统 IP，也不能代替全局隧道的 UDP/ICMP 承载。
 
@@ -190,5 +241,6 @@ QUIC 和 TCP 可由不同进程同时监听，但每个实例需要独立的端�
 - `authentication failed`：检查客户端 ID、令牌原文和服务端摘要是否匹配。
 - `create TUN device` 失败：确认管理员权限；Windows 确认 `wintun.dll` 与架构匹配。
 - 无法访问互联网：确认所选后端对应的 UDP/TCP 端口、防火墙 FORWARD、NAT 和出口网卡名称。
-- 默认 MTU 为 1150。QUIC 服务端会将更大的 `-mtu`（包括旧配置的 1280）限制为 1150，并把实际值下发给客户端，为最小 1200 字节 QUIC UDP 载荷预留封装开销。TCP 后端允许 576–1400；比较后端性能时使用相同 MTU。IPv4 大 UDP 包由内核分片/重组，内层 TCP 按实际 TUN MTU 分段。
+- IPv4 模式默认 MTU 为 1150，IPv4-only QUIC 会将更大的 MTU 限制为 1150。双栈默认 1280，允许 1280–1400；协商双栈后的 QUIC 对较大的封装数据报分片/重组，不依赖外层路径 MTU 探测。TCP IPv4 模式允许 576–1400；比较后端性能时使用相同 MTU。IPv4 大 UDP 包由内核分片/重组；IPv6 大 UDP 需要发送端进行源分片，路由器不替 IPv6 分片。
 - Linux DNS 配置失败：检查 `resolvectl status` 及 `/etc/resolv.conf`；启用后应能看到 TUN 的 DNS 和 `~.` 路由域。
+- IPv4 可用、IPv6 不通：确认两端启用 `-ipv6`，服务端 IPv6 出口路由、`ip6tables` 和 NAT66 可用；仅分配 ULA 隧道地址不能提供公网 IPv6。验收范围见[IPv6 验证记录](ipv6-verification-2026-11-01.md)。

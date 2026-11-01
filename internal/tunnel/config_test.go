@@ -2,6 +2,35 @@ package tunnel
 
 import "testing"
 
+func TestIPv6Config(t *testing.T) {
+	c := ClientConfig{IPv6: true, ServerAddr: "[2001:db8::1]:443", ClientID: "desktop", TokenFile: "token"}
+	c.SetDefaults()
+	if c.MTU != DualStackMTU || c.Validate() != nil {
+		t.Fatal("invalid dual-stack defaults", c)
+	}
+	c.MTU = DefaultMTU
+	if c.Validate() == nil {
+		t.Fatal("IPv6 requires a minimum MTU of 1280")
+	}
+	s := ServerConfig{IPv6: true, Transport: "tcp-plain", ListenAddr: ":443", TokenFile: "tokens"}
+	if err := s.SetDefaults(); err != nil {
+		t.Fatal(err)
+	}
+	if s.TunnelCIDR6 != DefaultTunnelCIDR6 || s.DNSIPv6 != DefaultDNS6 || s.Validate() != nil {
+		t.Fatal("invalid server dual-stack defaults", s)
+	}
+	for _, cidr := range []string{"::/64", "fe80::/64", "ff00::/64", "fd00::/97", "fd00::/32", "fd00::1/64", "10.0.0.0/24"} {
+		s.TunnelCIDR6 = cidr
+		if s.Validate() == nil {
+			t.Fatal("invalid IPv6 prefix accepted", cidr)
+		}
+	}
+	c.MTU, c.IPv6, c.DNSIPv6 = DefaultMTU, false, DefaultDNS6
+	if c.Validate() == nil {
+		t.Fatal("IPv6 DNS without IPv6 accepted")
+	}
+}
+
 func TestClientConfigDefaultsAndValidation(t *testing.T) {
 	config := ClientConfig{
 		ServerAddr: "vpn.example.com:443",

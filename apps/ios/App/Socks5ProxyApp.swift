@@ -12,6 +12,7 @@ struct ContentView: View {
     @AppStorage("serverName") private var serverName = ""
     @AppStorage("transport") private var transport = "quic"
     @AppStorage("obfs") private var obfs = "none"
+    @AppStorage("ipv6") private var ipv6 = false
     @State private var token = ""
     @State private var ca = ""
 
@@ -29,6 +30,7 @@ struct ContentView: View {
                         .privacySensitive()
                 }
                 Section("隧道") {
+                    Toggle("启用 IPv6（服务端也需开启）", isOn: $ipv6)
                     Picker("传输协议", selection: $transport) {
                         Text("QUIC").tag("quic")
                         Text("TCP · TLS 1.3").tag("tcp")
@@ -60,14 +62,14 @@ struct ContentView: View {
                             "client_id": clientID.trimmingCharacters(in: .whitespacesAndNewlines),
                             "token": token.trimmingCharacters(in: .whitespacesAndNewlines),
                             "server_name": serverName.trimmingCharacters(in: .whitespacesAndNewlines),
-                            "ca_pem": ca, "transport": transport, "obfs": obfs
+                            "ca_pem": ca, "transport": transport, "obfs": obfs, "ipv6": ipv6
                         ])
                     }
                     .disabled(vpn.active || vpn.busy || server.isEmpty || clientID.isEmpty || token.count < 32)
                     Button("断开", role: .destructive) { vpn.disconnect() }
                         .disabled(!vpn.active)
                 } footer: {
-                    Text("全局 IPv4 VPN，IPv6 被阻断。每台设备使用独立的客户端 ID。连接配置保存在本机 Keychain。")
+                    Text("启用 IPv6 后代理 IPv4 与 IPv6 流量，否则阻断 IPv6。每台设备使用独立的客户端 ID。连接配置保存在本机 Keychain。")
                 }
             }
             .textInputAutocapitalization(.never)

@@ -47,7 +47,7 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	if config.Transport == "quic" && config.MTU > tunnel.DefaultMTU {
+	if config.Transport == "quic" && !config.IPv6 && config.MTU > tunnel.DefaultMTU {
 		log.Printf("limiting tunnel MTU from %d to %d for QUIC datagram capacity", config.MTU, tunnel.DefaultMTU)
 		config.MTU = tunnel.DefaultMTU
 	}
@@ -94,10 +94,18 @@ func Run(ctx context.Context, config tunnel.ServerConfig) error {
 	defer tunDevice.Close()
 
 	prefix, _ := netip.ParsePrefix(config.TunnelCIDR)
+	var prefix6 netip.Prefix
+	var server6 netip.Addr
+	if config.IPv6 {
+		prefix6, _ = netip.ParsePrefix(config.TunnelCIDR6)
+		server6 = pool.IPv6(prefix6, pool.Server())
+	}
 	networkManager, err := tunnelnet.NewServerManager(tunnelnet.ServerOptions{
 		TUNName:           tunDevice.Name(),
 		TunnelPrefix:      prefix.Masked(),
 		ServerIP:          pool.Server(),
+		TunnelPrefix6:     prefix6,
+		ServerIPv6:        server6,
 		MTU:               config.MTU,
 		OutboundInterface: config.OutboundInterface,
 		ManageNetwork:     config.ManageNetwork,
@@ -169,12 +177,13 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	defer conn.CloseWithError(0, "session closed")
-	stopParent := context.AfterFunc(ctx, func() { _ = conn.CloseWithError(0, "server context canceled") })
+	authConn := conn
+	stopParent := context.AfterFunc(ctx, func() { _ = authConn.CloseWithError(0, "server context canceled") })
 	defer stopParent()
 
 	authCtx, authCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer authCancel()
-	stopAuth := context.AfterFunc(authCtx, func() { _ = conn.CloseWithError(1, "authentication timed out") })
+	stopAuth := context.AfterFunc(authCtx, func() { _ = authConn.CloseWithError(1, "authentication timed out") })
 	defer stopAuth()
 	stream, err := conn.AcceptControl(authCtx)
 	if err != nil {
@@ -217,6 +226,10 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		s.reject(stream)
 		return
 	}
+	if request.IPv6 && !s.config.IPv6 {
+		_ = protocol.WriteMessage(stream, protocol.Message{Type: protocol.TypeError, Version: protocol.Version, Error: "IPv6 tunnel is not enabled on the server"})
+		return
+	}
 	if s.config.Transport == "tcp-table" && s.table == nil {
 		s.reject(stream)
 		return
@@ -235,6 +248,7 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		id:       newSessionID(),
 		clientID: request.ClientID,
 		addr:     clientAddr,
+		mtu:      s.config.MTU,
 		obfs:     obfs,
 		cipher:   cipher,
 		conn:     conn,
@@ -251,6 +265,17 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		DNSIPv4:    s.config.DNS,
 		Obfs:       obfs,
 	}
+	if request.IPv6 {
+		prefix6, _ := netip.ParsePrefix(s.config.TunnelCIDR6)
+		current.addr6 = s.pool.IPv6(prefix6, clientAddr)
+		response.IPv6 = true
+		response.ClientIPv6 = current.addr6.String()
+		response.ServerIPv6 = s.pool.IPv6(prefix6, s.pool.Server()).String()
+		response.DNSIPv6 = s.config.DNSIPv6
+	} else if s.config.Transport == "quic" && current.mtu > tunnel.DefaultMTU {
+		current.mtu = tunnel.DefaultMTU
+		response.MTU = current.mtu
+	}
 	if isTCP {
 		response.Proof = protocol.AuthProof(proofKey, protocol.ServerProofRole, challenge, request.Nonce, response)
 	}
@@ -264,6 +289,10 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		return
 	}
 	authCancel()
+	if request.IPv6 && !isTCP {
+		conn = transport.WithFragmentation(conn)
+		current.conn = conn
+	}
 
 	previous := s.sessions.register(current)
 	if previous != nil {
@@ -287,8 +316,8 @@ func (s *Server) handleConnection(parent context.Context, conn transport.Conn) {
 		if err != nil {
 			return
 		}
-		packet, info, err := protocol.DecodeDatagram(payload, s.config.MTU, current.cipher)
-		if err != nil || info.Source != current.addr {
+		packet, info, err := protocol.DecodeDatagram(payload, current.mtu, current.cipher)
+		if err != nil || !protocol.MatchesLease(info.Source, current.addr, current.addr6) {
 			current.dropped.Add(1)
 			continue
 		}
@@ -338,7 +367,7 @@ func (s *Server) downlink(ctx context.Context) {
 			}
 			return
 		}
-		info, err := protocol.ValidateIPv4(packet, s.config.MTU)
+		info, err := protocol.ValidatePacket(packet, s.config.MTU)
 		if err != nil {
 			continue
 		}
@@ -346,7 +375,7 @@ func (s *Server) downlink(ctx context.Context) {
 		if current == nil {
 			continue
 		}
-		payload, _, err := protocol.EncodeDatagram(packet, s.config.MTU, current.cipher)
+		payload, _, err := protocol.EncodeDatagram(packet, current.mtu, current.cipher)
 		if err != nil {
 			current.dropped.Add(1)
 			continue

@@ -14,6 +14,8 @@ type session struct {
 	id        string
 	clientID  string
 	addr      netip.Addr
+	addr6     netip.Addr
+	mtu       int
 	obfs      string
 	cipher    protocol.Cipher
 	conn      transport.Conn
@@ -43,9 +45,13 @@ func (t *sessionTable) register(current *session) *session {
 	previous := t.byClient[current.clientID]
 	if previous != nil {
 		delete(t.byAddr, previous.addr)
+		delete(t.byAddr, previous.addr6)
 	}
 	t.byClient[current.clientID] = current
 	t.byAddr[current.addr] = current
+	if current.addr6.IsValid() {
+		t.byAddr[current.addr6] = current
+	}
 	return previous
 }
 
@@ -57,6 +63,7 @@ func (t *sessionTable) remove(current *session) {
 	}
 	delete(t.byClient, current.clientID)
 	delete(t.byAddr, current.addr)
+	delete(t.byAddr, current.addr6)
 }
 
 func (t *sessionTable) byAddress(addr netip.Addr) *session {

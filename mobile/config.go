@@ -1,4 +1,4 @@
-// Package mobile is the gomobile-compatible IPv4 tunnel client.
+// Package mobile is the gomobile-compatible dual-stack tunnel client.
 // Operating-system VPN services own routes and DNS; this package owns transport.
 package mobile
 
@@ -29,6 +29,8 @@ type config struct {
 	Obfs       string          `json:"obfs"`
 	MTU        int             `json:"mtu"`
 	DNS        string          `json:"dns"`
+	IPv6       bool            `json:"ipv6,omitempty"`
+	DNSIPv6    string          `json:"dns6,omitempty"`
 	table      *keytable.Table
 }
 
@@ -49,6 +51,9 @@ func parseConfig(raw string) (config, error) {
 	}
 	if c.MTU == 0 {
 		c.MTU = tunnel.DefaultMTU
+		if c.IPv6 {
+			c.MTU = tunnel.DualStackMTU
+		}
 	}
 	host, port, err := net.SplitHostPort(c.ServerAddr)
 	if err != nil || host == "" {
@@ -58,8 +63,8 @@ func parseConfig(raw string) (config, error) {
 	if err != nil || p < 1 || p > 65535 {
 		return c, errors.New("server port must be between 1 and 65535")
 	}
-	if ip, err := netip.ParseAddr(host); err == nil && !ip.Unmap().Is4() {
-		return c, errors.New("server endpoint must use IPv4")
+	if ip, err := netip.ParseAddr(host); err == nil && (ip.IsUnspecified() || ip.IsMulticast() || ip.Zone() != "") {
+		return c, errors.New("invalid server endpoint")
 	}
 	if c.ServerName == "" {
 		c.ServerName = host
@@ -84,6 +89,15 @@ func parseConfig(raw string) (config, error) {
 	if c.DNS != "" {
 		if ip, err := netip.ParseAddr(c.DNS); err != nil || !ip.Is4() {
 			return c, errors.New("DNS must be an IPv4 address")
+		}
+	}
+	if c.IPv6 && c.MTU < tunnel.DualStackMTU {
+		return c, errors.New("IPv6 requires MTU at least 1280")
+	}
+	if c.DNSIPv6 != "" {
+		ip, err := netip.ParseAddr(c.DNSIPv6)
+		if !c.IPv6 || err != nil || !ip.Is6() || ip.Is4In6() || !ip.IsGlobalUnicast() || ip.Zone() != "" {
+			return c, errors.New("dns6 requires IPv6 and a unicast IPv6 address")
 		}
 	}
 	return c, nil
@@ -118,10 +132,29 @@ type parameters struct {
 	DNSIPv4      string `json:"dns_ipv4"`
 	EndpointIPv4 string `json:"endpoint_ipv4"`
 	MTU          int    `json:"mtu"`
+	Endpoint     string `json:"endpoint"`
+	IPv6         bool   `json:"ipv6,omitempty"`
+	ClientIPv6   string `json:"client_ipv6,omitempty"`
+	ServerIPv6   string `json:"server_ipv6,omitempty"`
+	DNSIPv6      string `json:"dns_ipv6,omitempty"`
 }
 
 func (c config) parameters(response protocol.Message, endpoint string) (parameters, error) {
-	p := parameters{response.ClientIPv4, response.ServerIPv4, response.DNSIPv4, endpoint, response.MTU}
+	p := parameters{ClientIPv4: response.ClientIPv4, ServerIPv4: response.ServerIPv4, DNSIPv4: response.DNSIPv4, MTU: response.MTU, Endpoint: endpoint}
+	ip, err := netip.ParseAddr(endpoint)
+	if err != nil || ip.IsUnspecified() || ip.IsMulticast() || ip.Zone() != "" {
+		return p, errors.New("invalid tunnel endpoint")
+	}
+	if ip.Is4() {
+		p.EndpointIPv4 = endpoint
+	}
+	if _, _, _, err := protocol.ValidateIPv6Parameters(response, c.IPv6); err != nil {
+		return p, err
+	}
+	p.IPv6, p.ClientIPv6, p.ServerIPv6, p.DNSIPv6 = response.IPv6, response.ClientIPv6, response.ServerIPv6, response.DNSIPv6
+	if c.DNSIPv6 != "" {
+		p.DNSIPv6 = c.DNSIPv6
+	}
 	if c.DNS != "" {
 		p.DNSIPv4 = c.DNS
 	}

@@ -1,6 +1,6 @@
 # Android / iOS 客户端
 
-移动端连接本项目的 `-mode tunnel` 服务端，与桌面使用相同的认证、IPv4 包格式及 QUIC/TCP 后端。每台设备使用独立的 `client_id` 和服务端登记的 token；`proxy` 模式的密码不能直接替代隧道 token。
+移动端连接本项目的 `-mode tunnel` 服务端，与桌面使用相同的认证、IPv4/IPv6 包格式及 QUIC/TCP 后端。每台设备使用独立的 `client_id` 和服务端登记的 token；`proxy` 模式的密码不能直接替代隧道 token。
 
 ## 功能和边界
 
@@ -13,12 +13,14 @@
 | 混淆 | none、simple、random | 相同 |
 | DNS | 使用服务端下发 DNS | 使用服务端下发 DNS |
 | 断线 | 保留 VPN，退避重连 | 保留 VPN，显示 reasserting，退避重连 |
-| IPv6 | 不允许 IPv6 family，系统阻断 | 捕获 IPv6 默认路由后丢弃 |
+| IPv6 | 开关启用双栈，配置 IPv6 `/128` 与默认路由；关闭时系统阻断 IPv6 | 开关启用双栈，配置 IPv6 地址与默认路由；关闭时捕获 IPv6 后丢弃 |
 | 密钥保存 | token/CA 仅在进程内；偏好不保存 token | 配置存于共享 Keychain，本机解锁后可用 |
 
-当前隧道协议只支持 IPv4，服务器端点也必须解析到 IPv4。首次连接先解析端点并完成认证，再安装系统 VPN 设置；重连复用该 IPv4 地址，避免 DNS 请求再次进入尚未恢复的 VPN。端点 DNS 变化需要重新连接。
+默认只承载 IPv4，勾选 IPv6 开关后承载 IPv4 + IPv6；服务端必须启用 `-ipv6`，双栈默认 MTU 为 1280，不能使用小于 1280 的旧 MTU。IPv6 目标需要服务端 IPv6 出口，部署见[双栈隧道](tunnel.md#启用-ipv4--ipv6-双栈)。
 
-初次认证失败不会安装 VPN。暂时断线时保持 VPN 路由，队列有界，拥塞时丢包。服务器改变客户端 IP、DNS 或 MTU 时，核心终止，应用撤销 VPN，用户需重新连接。手动断开、权限撤销、应用/系统终止也会撤销 VPN；这不等于系统级“始终开启 VPN / 阻止无 VPN 连接”保障。本版本不自动启用 Always-on 或按需连接。
+服务器端点可为 IPv4、IPv6 或域名，IPv6 形式为 `[2001:db8::10]:443`（替换为实际地址）。首次连接先解析端点并完成认证，再安装系统 VPN 设置；重连复用首次选定的地址，避免 DNS 请求再次进入尚未恢复的 VPN。域名优先 IPv4，无 IPv4 时选择 IPv6；端点 DNS 变化需要重新连接。
+
+初次认证失败不会安装 VPN。暂时断线时保持 VPN 路由，队列有界，拥塞时丢包。服务器改变 IPv4/IPv6 地址、DNS 或 MTU 时，核心终止，应用撤销 VPN，用户需重新连接。手动断开、权限撤销、应用/系统终止也会撤销 VPN；这不等于系统级“始终开启 VPN / 阻止无 VPN 连接”保障。本版本不自动启用 Always-on 或按需连接。
 
 ## Android 构建
 
@@ -40,7 +42,7 @@ Linux 构建机将 `ANDROID_HOME` 换为实际 SDK 路径。脚本固定 gomobil
 adb install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-在应用里填写服务器 `host:port`、客户端 ID、token，选择与服务端一致的 transport/obfs。私有 CA 需要粘贴 PEM；证书名称与端点不同时填写 TLS 服务器名称。点“连接 VPN”，同意系统授权。通知栏会显示流量和重连状态，可从通知或应用断开。
+在应用里填写服务器 `host:port`、客户端 ID、token，选择与服务端一致的 transport/obfs。双栈服务端可勾选 IPv6 开关。私有 CA 需要粘贴 PEM；证书名称与端点不同时填写 TLS 服务器名称。点“连接 VPN”，同意系统授权。通知栏会显示流量和重连状态，可从通知或应用断开。
 
 所有外层 TCP/UDP 套接字都会先调用 `VpnService.protect`，失败则停止连接，重连也执行保护。Go 复制 VPN fd 后持有副本，服务保留原始 `ParcelFileDescriptor`；停止时两者均关闭。单个包不经过 Java/Go JNI，Go 直接读写 fd。
 
@@ -86,12 +88,16 @@ xcodebuild \
   "ca_pem": "",
   "transport": "quic",
   "obfs": "none",
-  "mtu": 1150,
-  "dns": ""
+  "ipv6": true,
+  "mtu": 1280,
+  "dns": "",
+  "dns6": ""
 }
 ```
 
-这里的 token 是说明字段，必须替换成真实服务端登记值。默认 transport=quic、obfs=none、MTU=1150；`dns` 可覆盖服务端下发的 IPv4 DNS。`ca_pem` 为空使用系统信任，不提供跳过证书验证选项。
+这里的 token 是说明字段，必须替换成真实服务端登记值。默认 transport=quic、obfs=none、ipv6=false；省略 MTU 或设为 0 时，IPv4 默认 1150，双栈默认 1280。`dns` / `dns6` 可覆盖服务端下发的对应 DNS，`dns6` 必须同时启用 IPv6。`ca_pem` 为空使用系统信任，不提供跳过证书验证选项。
+
+`Connect()` 返回的 JSON 保留 `client_ipv4`，双栈时增加 `client_ipv6`、`server_ipv6`、`dns_ipv6` 和 `ipv6`；`endpoint` 表示实际外层端点 IP。兼容字段 `endpoint_ipv4` 在外层为 IPv4 时包含地址，为 IPv6 时留空。原生层在协商成功后配置相应地址族；Android 的外层 IPv6 TCP/UDP socket 同样执行 `protect`。
 
 调用顺序：
 
@@ -120,4 +126,4 @@ bash scripts/build-desktop.sh
 
 `mobile` 的本地协议对端测试覆盖 3 种传输 × 3 种混淆、保护失败、参数校验、源/目的地址过滤、队列上限、取消认证、取消阻塞读取、同租约重连和参数变化终止。桌面原有握手和传输测试继续覆盖提取后的共享认证。
 
-真机联网、蜂窝/Wi-Fi 切换、锁屏、进程回收及签名分发需要对应设备与账号，不属于本地构建通过的证明范围。最新本地编译结果见 `verification-multiplatform-2026-09-20.md`。
+真机联网、蜂窝/Wi-Fi 切换、锁屏、进程回收及签名分发需要对应设备与账号，不属于本地构建通过的证明范围。历史构建结果见 `verification-multiplatform-2026-09-20.md`；此次双栈核心测试与原生验证边界见[IPv6 验证记录](ipv6-verification-2026-11-01.md)。

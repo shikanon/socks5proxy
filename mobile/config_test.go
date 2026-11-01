@@ -33,7 +33,7 @@ func TestParseConfig(t *testing.T) {
 		{"no_port", func(c *config) { c.ServerAddr = "localhost" }},
 		{"zero_port", func(c *config) { c.ServerAddr = "localhost:0" }},
 		{"large_port", func(c *config) { c.ServerAddr = "localhost:65536" }},
-		{"ipv6", func(c *config) { c.ServerAddr = "[::1]:443" }},
+		{"unspecified_ipv6", func(c *config) { c.ServerAddr = "[::]:443" }},
 		{"no_id", func(c *config) { c.ClientID = " " }},
 		{"short_token", func(c *config) { c.Token = "short" }},
 		{"small_mtu", func(c *config) { c.MTU = 575 }},
@@ -59,6 +59,41 @@ func TestParseConfig(t *testing.T) {
 		got, err := parseConfig(configJSON(t, cfg))
 		if err != nil || got.Transport != "quic" || got.Obfs != "none" || got.ServerName != "127.0.0.1" || got.MTU < 576 {
 			t.Fatal("defaults or valid boundary failed", got, err)
+		}
+	}
+}
+
+func TestMobileIPv6ConfigAndParameters(t *testing.T) {
+	cfg := testConfig()
+	cfg.IPv6, cfg.ServerAddr = true, "[2001:db8::1]:443"
+	parsed, err := parseConfig(configJSON(t, cfg))
+	if err != nil || parsed.MTU != 1280 {
+		t.Fatal("IPv6 config rejected", err)
+	}
+	msg := protocol.Message{ClientIPv4: "10.0.0.2", ServerIPv4: "10.0.0.1", DNSIPv4: "1.1.1.1", IPv6: true,
+		ClientIPv6: "fd00::2", ServerIPv6: "fd00::1", DNSIPv6: "2001:db8::53", MTU: 1280}
+	p, err := parsed.parameters(msg, "2001:db8::1")
+	if err != nil || p.Endpoint != "2001:db8::1" || p.EndpointIPv4 != "" || !p.IPv6 || p.ClientIPv6 != msg.ClientIPv6 {
+		t.Fatal("negotiated IPv6 fields lost", p, err)
+	}
+	parsed.DNSIPv6 = "2001:db8::54"
+	p, err = parsed.parameters(msg, "2001:db8::1")
+	if err != nil || p.DNSIPv6 != parsed.DNSIPv6 {
+		t.Fatal("IPv6 DNS override lost")
+	}
+	msg.IPv6 = false
+	if _, err := parsed.parameters(msg, "2001:db8::1"); err == nil {
+		t.Fatal("unsupported IPv6 accepted")
+	}
+	for _, edit := range []func(*config){
+		func(c *config) { c.MTU = 1150 },
+		func(c *config) { c.DNSIPv6 = "1.1.1.1" },
+		func(c *config) { c.IPv6, c.DNSIPv6 = false, "2001:db8::53" },
+	} {
+		invalid := cfg
+		edit(&invalid)
+		if _, err := parseConfig(configJSON(t, invalid)); err == nil {
+			t.Fatal("invalid dual-stack config accepted")
 		}
 	}
 }

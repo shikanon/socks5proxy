@@ -43,7 +43,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 if let connectError { throw connectError }
                 guard let data = response.data(using: .utf8),
                       let p = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let endpoint = p["endpoint_ipv4"] as? String,
+                      let endpoint = p["endpoint"] as? String,
                       let address = p["client_ipv4"] as? String,
                       let dns = p["dns_ipv4"] as? String,
                       let mtu = p["mtu"] as? Int else {
@@ -55,12 +55,25 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 // Provider-owned sockets bypass the tunnel; no endpoint exclusion
                 // is needed, so app traffic to that IP also follows the VPN.
                 settings.ipv4Settings = ipv4
-                // Capture IPv6 and discard it in the packet loop, since the wire
-                // protocol only supports IPv4. This prevents an IPv6 bypass.
-                let ipv6 = NEIPv6Settings(addresses: ["fd00:5:5::2"], networkPrefixLengths: [128])
+                let dualStack = p["ipv6"] as? Bool ?? false
+                let address6: String
+                if dualStack {
+                    guard let negotiated = p["client_ipv6"] as? String, !negotiated.isEmpty else {
+                        throw self.failure("缺少 IPv6 隧道地址")
+                    }
+                    address6 = negotiated
+                } else {
+                    // Capture unsupported IPv6; the core discards this family.
+                    address6 = "fd00:5:5::2"
+                }
+                let ipv6 = NEIPv6Settings(addresses: [address6], networkPrefixLengths: [128])
                 ipv6.includedRoutes = [NEIPv6Route.default()]
                 settings.ipv6Settings = ipv6
-                let dnsSettings = NEDNSSettings(servers: [dns])
+                var servers = [dns]
+                if dualStack, let dns6 = p["dns_ipv6"] as? String, !dns6.isEmpty {
+                    servers.append(dns6)
+                }
+                let dnsSettings = NEDNSSettings(servers: servers)
                 dnsSettings.matchDomains = [""]
                 settings.dnsSettings = dnsSettings
                 settings.mtu = NSNumber(value: mtu)
@@ -91,7 +104,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         packetFlow.readPackets { [weak self] packets, protocols in
             guard let self, self.isRunning else { return }
             do {
-                for (packet, family) in zip(packets, protocols) where family.int32Value == AF_INET {
+                for (packet, family) in zip(packets, protocols)
+                    where family.int32Value == AF_INET || family.int32Value == AF_INET6 {
                     try client.writePacket(packet)
                 }
                 self.readFromOS(client)
@@ -105,7 +119,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             do {
                 while self.isRunning {
                     let packet = try client.readPacket()
-                    guard self.packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)]) else {
+                    guard let first = packet.first else { continue }
+                    let family: Int32 = first >> 4 == 6 ? AF_INET6 : AF_INET
+                    guard self.packetFlow.writePackets([packet], withProtocols: [NSNumber(value: family)]) else {
                         throw self.failure("无法向系统写入 VPN 数据包")
                     }
                 }

@@ -35,7 +35,10 @@ func main() {
 	tableClientID := flag.String("client-id", "desktop", "Authorized client identifier for tcp-table")
 	tunnelCIDR := flag.String("tunnel-cidr", tunnel.DefaultTunnelCIDR, "Tunnel IPv4 CIDR")
 	dns := flag.String("dns", tunnel.DefaultDNS, "Tunnel DNS IPv4 address")
-	mtu := flag.Int("mtu", tunnel.DefaultMTU, "Tunnel MTU (576-1400)")
+	ipv6 := flag.Bool("ipv6", false, "Enable IPv6 tunnel addresses, forwarding and NAT66")
+	tunnelCIDR6 := flag.String("tunnel-cidr6", "", "Tunnel IPv6 prefix (default with IPv6: fd00:5:5::/64)")
+	dns6 := flag.String("dns6", "", "Tunnel DNS IPv6 address (default with IPv6: 2606:4700:4700::1111)")
+	mtu := flag.Int("mtu", 0, "Tunnel MTU (default: 1150; IPv6: 1280, maximum: 1400)")
 	outbound := flag.String("outbound-interface", "", "Linux outbound interface for tunnel NAT")
 	manageNetwork := flag.Bool("manage-network", true, "Configure Linux forwarding and NAT")
 	obfsAllow := flag.String("obfs-allow", "none,simple,random", "Allowed tunnel obfuscation modes (not encryption)")
@@ -78,6 +81,9 @@ func main() {
 			TableTokenLength:  *tableTokenLength,
 			TableClientID:     *tableClientID,
 			TunnelCIDR:        *tunnelCIDR,
+			IPv6:              *ipv6,
+			TunnelCIDR6:       *tunnelCIDR6,
+			DNSIPv6:           *dns6,
 			DNS:               *dns,
 			MTU:               *mtu,
 			OutboundInterface: *outbound,

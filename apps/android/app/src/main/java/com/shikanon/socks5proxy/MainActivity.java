@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.text.InputType;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.Switch;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -24,6 +25,7 @@ public final class MainActivity extends Activity {
     private Spinner transport, obfs;
     private TextView state;
     private Button connect;
+    private Switch ipv6;
     private final Handler handler = new Handler();
     private String pendingConfig;
     private final Runnable refresh = new Runnable() {
@@ -57,7 +59,7 @@ public final class MainActivity extends Activity {
         title.setTextSize(30);
         body.addView(title);
         TextView description = new TextView(this);
-        description.setText("全局 IPv4 VPN · QUIC / TCP\n配置需与服务端一致，每台设备使用独立的客户端 ID。");
+        description.setText("全局 VPN · QUIC / TCP\n配置需与服务端一致，每台设备使用独立的客户端 ID。");
         body.addView(description);
         state = new TextView(this);
         state.setTextSize(18);
@@ -77,8 +79,12 @@ public final class MainActivity extends Activity {
         ca.setSaveEnabled(false);
         transport = choice(body, "传输协议", new String[]{"quic", "tcp", "tcp-plain"});
         obfs = choice(body, "混淆", new String[]{"none", "simple", "random"});
+        ipv6 = new Switch(this);
+        ipv6.setText("启用 IPv6（服务端也需开启）");
+        ipv6.setChecked(prefs.getBoolean("ipv6", false));
+        body.addView(ipv6);
         TextView note = new TextView(this);
-        note.setText("tcp 使用 TLS 1.3；tcp-plain 不加密。simple/random 混淆不能替代加密。\nToken 和 CA 仅在本次运行中保留。IPv6 被阻断。");
+        note.setText("tcp 使用 TLS 1.3；tcp-plain 不加密。simple/random 混淆不能替代加密。\nToken 和 CA 仅在本次运行中保留。未开启 IPv6 时阻断 IPv6 流量。");
         body.addView(note);
         connect = new Button(this);
         connect.setText("连接 VPN");
@@ -136,9 +142,11 @@ public final class MainActivity extends Activity {
                 .put("server_name", serverName.getText().toString().trim())
                 .put("ca_pem", ca.getText().toString())
                 .put("transport", transport.getSelectedItem().toString())
+                .put("ipv6", ipv6.isChecked())
                 .put("obfs", obfs.getSelectedItem().toString()).toString();
             getPreferences(MODE_PRIVATE).edit().putString("server", endpoint).putString("id", id)
-                .putString("sni", serverName.getText().toString().trim()).apply();
+                .putString("sni", serverName.getText().toString().trim())
+                .putBoolean("ipv6", ipv6.isChecked()).apply();
             Intent consent = VpnService.prepare(this);
             if (consent != null) startActivityForResult(consent, 1);
             else startVPN();

@@ -42,7 +42,9 @@ func main() {
 	serverName := flag.String("server-name", "", "TLS server name (default: server host)")
 	dns := flag.String("dns", "", "Tunnel DNS IPv4 address (default: server-provided)")
 	linuxDNS := flag.Bool("linux-dns", true, "Manage Linux DNS with systemd-resolved (disable only with externally managed tunnel DNS)")
-	mtu := flag.Int("mtu", tunnel.DefaultMTU, "Tunnel MTU (576-1400)")
+	ipv6 := flag.Bool("ipv6", false, "Enable global IPv4 and IPv6 tunneling (server must also enable IPv6)")
+	dns6 := flag.String("dns6", "", "Tunnel DNS IPv6 address (default: server-provided)")
+	mtu := flag.Int("mtu", 0, "Tunnel MTU (default: 1150; IPv6: 1280, maximum: 1400)")
 	stateDir := flag.String("state-dir", "", "Directory for recoverable network state")
 	obfs := flag.String("obfs", "none", "Tunnel obfuscation (not encryption): none, simple, or random")
 	tunName := flag.String("tun-name", "", "Tunnel interface name")
@@ -98,6 +100,8 @@ func main() {
 			CAFile:       *caFile,
 			ServerName:   *serverName,
 			DNS:          *dns,
+			IPv6:         *ipv6,
+			DNSIPv6:      *dns6,
 			MTU:          *mtu,
 			StateDir:     *stateDir,
 			Obfs:         *obfs,

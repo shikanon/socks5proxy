@@ -19,7 +19,7 @@ type ControlStream interface {
 	SetDeadline(time.Time) error
 }
 
-// Conn transports complete encoded IPv4 datagrams after control authentication.
+// Conn transports complete encoded IP datagrams after control authentication.
 type Conn interface {
 	Context() context.Context
 	OpenControl(context.Context) (ControlStream, error)
@@ -82,12 +82,16 @@ func DialTunnelWithControl(ctx context.Context, addr string, cfg *tls.Config, ki
 	switch kind {
 	case "", "quic":
 		if control != nil {
-			peer, err := net.ResolveUDPAddr("udp4", addr)
+			peer, err := net.ResolveUDPAddr("udp", addr)
 			if err != nil {
 				return nil, err
 			}
 			lc := net.ListenConfig{Control: control}
-			socket, err := lc.ListenPacket(ctx, "udp4", "0.0.0.0:0")
+			network, localAddr := "udp4", "0.0.0.0:0"
+			if peer.IP.To4() == nil {
+				network, localAddr = "udp6", "[::]:0"
+			}
+			socket, err := lc.ListenPacket(ctx, network, localAddr)
 			if err != nil {
 				return nil, err
 			}

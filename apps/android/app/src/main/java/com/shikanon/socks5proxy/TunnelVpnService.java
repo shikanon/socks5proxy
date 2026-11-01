@@ -60,15 +60,21 @@ public final class TunnelVpnService extends VpnService {
             JSONObject p = new JSONObject(local.connect());
             synchronized (lock) {
                 if (current != generation) return;
-                tun = new Builder()
+                Builder builder = new Builder()
                     .setSession("Socks5Proxy")
                     .setMtu(p.getInt("mtu"))
                     .addAddress(p.getString("client_ipv4"), 32)
                     .addRoute("0.0.0.0", 0)
                     .addDnsServer(p.getString("dns_ipv4"))
-                    .setBlocking(false)
-                    // No IPv6 family/address/route: Android blocks unsupported IPv6.
-                    .establish();
+                    .setBlocking(false);
+                if (p.optBoolean("ipv6", false)) {
+                    builder.addAddress(p.getString("client_ipv6"), 128)
+                        .addRoute("::", 0);
+                    String dns6 = p.optString("dns_ipv6", "");
+                    if (!dns6.isEmpty()) builder.addDnsServer(dns6);
+                }
+                // Without an IPv6 address or DNS, Android blocks this family.
+                tun = builder.establish();
                 if (tun == null) throw new IllegalStateException("VPN 授权已撤销");
                 local.attachFD(tun.getFd());
                 local.start();

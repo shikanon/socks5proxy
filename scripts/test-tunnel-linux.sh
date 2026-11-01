@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != "Linux" || "$(id -u)" -ne 0 ]]; then
   exit 77
 fi
 
-for command in go ip iptables openssl python3 curl ping sha256sum; do
+for command in go ip iptables iptables-save sysctl realpath openssl python3 curl ping sha256sum; do
   command -v "$command" >/dev/null || {
     echo "Missing required command: $command" >&2
     exit 77
@@ -18,15 +18,43 @@ if [[ ! -c /dev/net/tun ]]; then
   exit 77
 fi
 
-root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+root_dir="$(dirname "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
 transport_mode="${TUNNEL_TRANSPORT:-quic}"
+ipv6="${TUNNEL_IPV6:-false}"
+endpoint_ipv6="${TUNNEL_ENDPOINT_IPV6:-false}"
+ipv6_args=()
+endpoint="192.0.2.1:1443"
+server_name="192.0.2.1"
+physical_mtu=1228
+if [[ "$ipv6" == "true" ]]; then
+  for command in ip6tables ip6tables-save; do
+    command -v "$command" >/dev/null || exit 77
+  done
+  ipv6_args=(-ipv6 -dns6 2001:db8:2::2)
+  physical_mtu=1280
+elif [[ "$ipv6" != "false" ]]; then
+  echo "TUNNEL_IPV6 must be true or false." >&2
+  exit 1
+fi
+if [[ "$endpoint_ipv6" == "true" ]]; then
+  [[ "$ipv6" == "true" ]] || { echo "IPv6 endpoint test requires TUNNEL_IPV6=true." >&2; exit 1; }
+  endpoint="[2001:db8:1::1]:1443"
+  server_name="2001:db8:1::1"
+elif [[ "$endpoint_ipv6" != "false" ]]; then
+  echo "TUNNEL_ENDPOINT_IPV6 must be true or false." >&2
+  exit 1
+fi
+[[ "$ipv6" == "true" && "$transport_mode" == "proxy" ]] && {
+  echo "IPv6 acceptance requires a tunnel transport." >&2
+  exit 1
+}
 obfs_mode="${TUNNEL_OBFS:-random}"
 if [[ "$transport_mode" == "tcp-table" ]]; then
   obfs_mode="${TUNNEL_OBFS:-none}"
 fi
 configured_mtu="${TUNNEL_TEST_MTU:-1280}"
 packet_mtu="$configured_mtu"
-[[ "$transport_mode" == "quic" ]] && packet_mtu=1150
+[[ "$transport_mode" == "quic" && "$ipv6" == "false" ]] && packet_mtu=1150
 work_dir="$(mktemp -d)"
 suffix="$$"
 client_ns="s5pc-${suffix}"
@@ -36,9 +64,16 @@ client_pid=""
 server_pid=""
 target_pid=""
 dns_pid=""
+ipv6_pid=""
 
 cleanup() {
+  local status="$?"
   set +e
+  if [[ "$status" -ne 0 ]]; then
+    for log in server client ipv6-target; do
+      [[ -f "$work_dir/$log.log" ]] && cat "$work_dir/$log.log" >&2
+    done
+  fi
   if [[ -n "$client_pid" ]]; then
     if [[ "$transport_mode" == "proxy" ]]; then
       kill -TERM "$client_pid" 2>/dev/null
@@ -49,7 +84,8 @@ cleanup() {
   [[ -n "$server_pid" ]] && kill -TERM "$server_pid" 2>/dev/null
   [[ -n "$target_pid" ]] && kill "$target_pid" 2>/dev/null
   [[ -n "$dns_pid" ]] && kill "$dns_pid" 2>/dev/null
-  wait "$client_pid" "$server_pid" "$target_pid" "$dns_pid" 2>/dev/null
+  [[ -n "$ipv6_pid" ]] && kill "$ipv6_pid" 2>/dev/null
+  wait "$client_pid" "$server_pid" "$target_pid" "$dns_pid" "$ipv6_pid" 2>/dev/null
   ip netns del "$client_ns" 2>/dev/null
   ip netns del "$server_ns" 2>/dev/null
   ip netns del "$target_ns" 2>/dev/null
@@ -57,9 +93,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cd "$root_dir"
-CGO_ENABLED=0 go build -o "$work_dir/client" ./cmd/client
-CGO_ENABLED=0 go build -o "$work_dir/server" ./cmd/server
+CGO_ENABLED=0 go -C "$root_dir" build -o "$work_dir/client" ./cmd/client
+CGO_ENABLED=0 go -C "$root_dir" build -o "$work_dir/server" ./cmd/server
 
 if [[ "$transport_mode" == "quic" || "$transport_mode" == "tcp" ]]; then
   openssl req -x509 -newkey rsa:2048 -nodes \
@@ -67,7 +102,7 @@ if [[ "$transport_mode" == "quic" || "$transport_mode" == "tcp" ]]; then
     -out "$work_dir/server.crt" \
     -days 1 \
     -subj "/CN=192.0.2.1" \
-    -addext "subjectAltName=IP:192.0.2.1" >/dev/null 2>&1
+    -addext "subjectAltName=IP:192.0.2.1,IP:2001:db8:1::1" >/dev/null 2>&1
   chmod 600 "$work_dir/server.key"
 fi
 
@@ -88,13 +123,13 @@ ip link set s5pt0 netns "$target_ns"
 
 ip -n "$client_ns" link set lo up
 ip -n "$client_ns" addr add 192.0.2.2/24 dev s5pc0
-ip -n "$client_ns" link set s5pc0 mtu 1228 up
+ip -n "$client_ns" link set s5pc0 mtu "$physical_mtu" up
 ip -n "$client_ns" route add default via 192.0.2.1
 
 ip -n "$server_ns" link set lo up
 ip -n "$server_ns" addr add 192.0.2.1/24 dev s5ps0
 ip -n "$server_ns" addr add 198.51.100.1/24 dev s5ps1
-ip -n "$server_ns" link set s5ps0 mtu 1228 up
+ip -n "$server_ns" link set s5ps0 mtu "$physical_mtu" up
 ip -n "$server_ns" link set s5ps1 up
 
 ip -n "$target_ns" link set lo up
@@ -103,6 +138,15 @@ ip -n "$target_ns" link set s5pt0 up
 ip -n "$target_ns" route add default via 198.51.100.1
 
 ip netns exec "$server_ns" iptables -A FORWARD -i s5ps0 -o s5ps1 -j DROP
+if [[ "$ipv6" == "true" ]]; then
+  ip -n "$client_ns" -6 addr add 2001:db8:1::2/64 dev s5pc0 nodad
+  ip -n "$server_ns" -6 addr add 2001:db8:1::1/64 dev s5ps0 nodad
+  ip -n "$server_ns" -6 addr add 2001:db8:2::1/64 dev s5ps1 nodad
+  ip -n "$target_ns" -6 addr add 2001:db8:2::2/64 dev s5pt0 nodad
+  ip -n "$client_ns" -6 route add default via 2001:db8:1::1
+  ip -n "$target_ns" -6 route add default via 2001:db8:2::1
+  ip netns exec "$server_ns" ip6tables -A FORWARD -i s5ps0 -o s5ps1 -j DROP
+fi
 
 python3 -c 'import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256))*4096)' "$work_dir/payload.bin"
 ip netns exec "$target_ns" python3 "$root_dir/scripts/benchmark-tunnel.py" \
@@ -139,6 +183,17 @@ while True:
         ready.sendto(response, peer)
 ' >"$work_dir/dns.log" 2>&1 &
 dns_pid="$!"
+ipv6_url="http://[2001:db8:2::2]:8080"
+if [[ "$ipv6" == "true" ]]; then
+  ip netns exec "$target_ns" python3 "$root_dir/scripts/test-tunnel-ipv6.py" \
+    serve "$work_dir" >"$work_dir/ipv6-target.log" 2>&1 &
+  ipv6_pid="$!"
+  if ip netns exec "$client_ns" curl -g --noproxy '*' -fsS --connect-timeout 1 --max-time 3 \
+    "$ipv6_url/" >/dev/null 2>&1; then
+    echo "Direct IPv6 traffic unexpectedly reached the target." >&2
+    exit 1
+  fi
+fi
 
 if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
   http://198.51.100.2:8080/ >/dev/null 2>&1; then
@@ -147,6 +202,24 @@ if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
 fi
 # Snapshot only after both ends of each veth are up.
 ip -n "$client_ns" route show >"$work_dir/client-routes-before"
+snapshot_server() {
+  local label="$1"
+  # -S also emits default policies for tables that have not been materialized
+  # by the kernel yet; iptables-save would make a later empty NAT table differ.
+  ip netns exec "$server_ns" iptables -S >"$work_dir/server-firewall-$label"
+  ip netns exec "$server_ns" iptables -t nat -S >>"$work_dir/server-firewall-$label"
+  ip netns exec "$server_ns" sysctl -n net.ipv4.ip_forward >"$work_dir/server-forward-$label"
+  if [[ "$ipv6" == "true" ]]; then
+    ip netns exec "$server_ns" ip6tables -S >"$work_dir/server-firewall6-$label"
+    ip netns exec "$server_ns" ip6tables -t nat -S >>"$work_dir/server-firewall6-$label"
+    ip netns exec "$server_ns" sysctl -n net.ipv6.conf.all.forwarding \
+      net.ipv6.conf.s5ps1.accept_ra >"$work_dir/server-forward6-$label"
+  fi
+}
+snapshot_server before
+if [[ "$ipv6" == "true" ]]; then
+  ip -n "$client_ns" -6 route show >"$work_dir/client-routes6-before"
+fi
 
 if [[ "$transport_mode" == "proxy" ]]; then
   : "${TUNNEL_BENCH_OUTPUT:?proxy comparison requires TUNNEL_BENCH_OUTPUT}"
@@ -173,7 +246,7 @@ start_server() {
   ip netns exec "$server_ns" "$work_dir/server" \
   -mode tunnel \
   -transport "$transport_mode" \
-  -local 192.0.2.1:1443 \
+  -local "$endpoint" \
   -cert "$work_dir/server.crt" \
   -key "$work_dir/server.key" \
   -token-file "$work_dir/clients.tokens" \
@@ -183,6 +256,7 @@ start_server() {
   -outbound-interface s5ps1 \
   -state-dir "$work_dir/server-state" \
   -mtu "$configured_mtu" \
+  "${ipv6_args[@]}" \
   -obfs-allow none,simple,random >"$work_dir/server.log" 2>&1 &
   server_pid="$!"
 }
@@ -192,14 +266,15 @@ sleep 1
 ip netns exec "$client_ns" "$work_dir/client" \
   -mode tunnel \
   -transport "$transport_mode" \
-  -server 192.0.2.1:1443 \
-  -server-name 192.0.2.1 \
+  -server "$endpoint" \
+  -server-name "$server_name" \
   -ca "$work_dir/server.crt" \
   -client-id integration \
   -token-file "$work_dir/client.token" \
   -table-file "$work_dir/token-table.json" \
   -state-dir "$work_dir/client-state" \
   -mtu "$configured_mtu" \
+  "${ipv6_args[@]}" \
   -linux-dns=false \
   -dns 1.1.1.1 \
   -obfs "$obfs_mode" >"$work_dir/client.log" 2>&1 &
@@ -260,6 +335,21 @@ for size in (1, 512, 1122, 4096):
     print("UDP echo bytes:", size)
 '
 
+verify_ipv6() {
+  ip netns exec "$client_ns" python3 "$root_dir/scripts/test-tunnel-ipv6.py" check "$work_dir/payload.bin"
+  ip netns exec "$client_ns" ping -6 -n -c 3 -W 2 -M do -s 1232 2001:db8:2::2
+}
+if [[ "$ipv6" == "true" ]]; then
+  ip -n "$client_ns" -6 route show >"$work_dir/client-routes6-connected"
+  ip -n "$client_ns" route show >"$work_dir/client-routes-connected"
+  endpoint_route="$(ip -n "$client_ns" route get "$server_name")"
+  [[ "$endpoint_route" == *"dev s5pc0"* ]] || {
+    echo "Outer endpoint lost its physical bypass: $endpoint_route" >&2
+    exit 1
+  }
+  verify_ipv6
+fi
+
 kill -TERM "$server_pid"
 wait "$server_pid" 2>/dev/null || true
 server_pid=""
@@ -271,6 +361,20 @@ fi
 if ip netns exec "$server_ns" iptables-save | grep -q socks5proxy-tunnel; then
   echo "Server firewall rules were not restored on shutdown." >&2
   exit 1
+fi
+snapshot_server stopped
+for state in firewall forward; do
+  cmp "$work_dir/server-$state-before" "$work_dir/server-$state-stopped"
+done
+if [[ "$ipv6" == "true" ]]; then
+  for state in firewall6 forward6; do
+    cmp "$work_dir/server-$state-before" "$work_dir/server-$state-stopped"
+  done
+  if ip netns exec "$client_ns" curl -g --noproxy '*' -fsS --connect-timeout 1 --max-time 3 \
+    "$ipv6_url/" >/dev/null 2>&1; then
+    echo "IPv6 traffic leaked after the tunnel server stopped." >&2
+    exit 1
+  fi
 fi
 sleep 1
 if ip netns exec "$client_ns" curl -fsS --connect-timeout 1 --max-time 3 \
@@ -300,6 +404,13 @@ ip netns exec "$client_ns" curl -fsS --connect-timeout 2 --max-time 20 \
   http://198.51.100.2:8080/payload.bin -o "$work_dir/reconnected.bin"
 [[ "$(sha256sum "$work_dir/payload.bin" | cut -d' ' -f1)" == \
    "$(sha256sum "$work_dir/reconnected.bin" | cut -d' ' -f1)" ]]
+if [[ "$ipv6" == "true" ]]; then
+  verify_ipv6
+  ip -n "$client_ns" -6 route show >"$work_dir/client-routes6-reconnected"
+  ip -n "$client_ns" route show >"$work_dir/client-routes-reconnected"
+  cmp "$work_dir/client-routes6-connected" "$work_dir/client-routes6-reconnected"
+  cmp "$work_dir/client-routes-connected" "$work_dir/client-routes-reconnected"
+fi
 
 kill -INT "$client_pid"
 wait "$client_pid" 2>/dev/null || true
@@ -316,4 +427,9 @@ if ! cmp -s "$work_dir/client-routes-before" "$work_dir/client-routes-after"; th
   exit 1
 fi
 
-echo "Tunnel integration test passed: transport=$transport_mode obfs=$obfs_mode"
+if [[ "$ipv6" == "true" ]]; then
+  ip -n "$client_ns" -6 route show >"$work_dir/client-routes6-after"
+  cmp "$work_dir/client-routes6-before" "$work_dir/client-routes6-after"
+fi
+
+echo "Tunnel integration test passed: transport=$transport_mode obfs=$obfs_mode ipv6=$ipv6 endpoint_ipv6=$endpoint_ipv6"

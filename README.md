@@ -14,7 +14,7 @@
 项目同时支持两种运行模式：
 
 - `proxy`：HTTP/SOCKS5 TCP 应用代理，支持 HTTP 转发、HTTPS CONNECT、全代理/网站规则分流（`*`、`?` 通配符）、PAC，以及 `simple` / `random` 流量混淆。
-- `tunnel`：Linux/macOS/Windows 全局 IPv4 TUN，以及 Android VpnService / iOS Packet Tunnel 原生客户端，默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）、显式无加密 TCP（`-transport tcp-plain`），或无需 TLS 的每日令牌替换表（`-transport tcp-table`）。后者使用服务端自动生成的 8–16 位随机令牌表与 UTC 当日时间戳，详见[令牌表隧道](./docs/token-table.md)。
+- `tunnel`：Linux/macOS/Windows 全局 TUN，以及 Android VpnService / iOS Packet Tunnel 原生客户端。默认 IPv4，两端添加 `-ipv6` 可启用 IPv4 + IPv6 双栈，覆盖 TCP、UDP、ICMP 和 DNS。默认使用 QUIC + TLS 1.3；可选 TCP + TLS 1.3（`-transport tcp`）、显式无加密 TCP（`-transport tcp-plain`），或无需 TLS 的每日令牌替换表（`-transport tcp-table`）。后者使用服务端自动生成的 8–16 位随机令牌表与 UTC 当日时间戳，详见[令牌表隧道](./docs/token-table.md)。
 
 ## 客户端平台
 
@@ -26,7 +26,7 @@
 | Android 8.0+ | arm64、armv7、x86_64 | 原生配置界面 + VpnService；构建 APK 后安装 |
 | iOS / iPadOS 15+ | arm64；模拟器 arm64、x86_64 | SwiftUI + NetworkExtension；真机需 Apple 签名 |
 
-桌面发布物由 Release workflow 构建；移动源码、AAR/XCFramework 和应用构建入口见[移动客户端文档](./docs/mobile-clients.md)。移动端目前提供全局 IPv4 隧道，尚无真机联网验收；IPv6 被阻断。应用签名和商店分发由使用者配置。
+桌面发布物由 Release workflow 构建；移动源码、AAR/XCFramework 和应用构建入口见[移动客户端文档](./docs/mobile-clients.md)。移动端可在界面启用 IPv6 双栈，尚无真机联网验收。应用签名和商店分发由使用者配置。IPv6 新增支持的验证范围见[双栈验收记录](./docs/ipv6-verification-2026-11-01.md)；已有 v0.2.1 发布物不包含此改动。
 
 ## 安全说明
 
@@ -85,7 +85,7 @@ curl --noproxy "" --proxy http://127.0.0.1:8888 https://example.com/
 
 浏览器设置 HTTP/HTTPS 代理为 `127.0.0.1:8888`。若客户端改为 `-recv socks5`，浏览器也必须选择 SOCKS5，curl 使用 `--proxy socks5h://127.0.0.1:8888`。代理目标不能指回这两个监听端口。跨机器部署时，客户端的 `-server` 改为服务端地址；完整说明见[应用代理部署](./docs/proxy.md)。
 
-`-passwd` **没有默认值，必须显式设置**；`-type` 默认 `random`，两端必须相同。客户端 `-recv` 默认 `http`。应用代理只处理主动配置代理的应用；全局 IPv4 流量请使用[隧道模式](./docs/tunnel.md)。
+`-passwd` **没有默认值，必须显式设置**；`-type` 默认 `random`，两端必须相同。客户端 `-recv` 默认 `http`。应用代理只处理主动配置代理的应用；全局 IPv4/IPv6 流量请使用[隧道模式](./docs/tunnel.md)，双栈需两端启用 `-ipv6`，服务端出口具备 IPv6 路由。
 
 只让指定网站走远程代理，其余直连：
 

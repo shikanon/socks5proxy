@@ -1,9 +1,31 @@
 package server
 
 import (
+	"net/netip"
 	"sync"
 	"testing"
 )
+
+func TestIPv6ReservationsReuseIPv4Offsets(t *testing.T) {
+	a, _ := NewAddressPool("10.40.0.0/24")
+	b, _ := NewAddressPool("10.40.0.0/24")
+	_ = a.Reserve([]string{"a", "b", "c"})
+	_ = b.Reserve([]string{"c", "a", "b"})
+	prefix := netip.MustParsePrefix("fd00:5:5::/64")
+	if got := a.IPv6(prefix, a.Server()).String(); got != "fd00:5:5::1" {
+		t.Fatal("incorrect IPv6 server lease", got)
+	}
+	seen := make(map[netip.Addr]bool)
+	for _, id := range []string{"a", "b", "c"} {
+		x, _ := a.Acquire(id)
+		y, _ := b.Acquire(id)
+		x6, y6 := a.IPv6(prefix, x), b.IPv6(prefix, y)
+		if x6 != y6 || !prefix.Contains(x6) || seen[x6] {
+			t.Fatal("unstable or duplicate IPv6 lease", x6, y6)
+		}
+		seen[x6] = true
+	}
+}
 
 func TestAddressPoolAllocatesUniqueAddressesAndReusesClientAddress(t *testing.T) {
 	pool, err := NewAddressPool("10.20.30.0/29")

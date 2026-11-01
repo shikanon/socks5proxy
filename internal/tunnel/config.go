@@ -15,9 +15,12 @@ const (
 	// Leave room in QUIC's minimum 1200-byte UDP payload for a short header,
 	// a 20-byte connection ID, packet number, AEAD tag, DATAGRAM frame and
 	// our two-byte packet length. Do not depend on path MTU discovery.
-	DefaultMTU        = 1150
-	DefaultTunnelCIDR = "10.255.0.0/24"
-	DefaultDNS        = "1.1.1.1"
+	DefaultMTU         = 1150
+	DefaultTunnelCIDR  = "10.255.0.0/24"
+	DefaultDNS         = "1.1.1.1"
+	DualStackMTU       = 1280
+	DefaultTunnelCIDR6 = "fd00:5:5::/64"
+	DefaultDNS6        = "2606:4700:4700::1111"
 )
 
 type ClientConfig struct {
@@ -29,6 +32,8 @@ type ClientConfig struct {
 	CAFile       string
 	ServerName   string
 	DNS          string
+	IPv6         bool
+	DNSIPv6      string
 	MTU          int
 	StateDir     string
 	Obfs         string
@@ -46,6 +51,9 @@ type ServerConfig struct {
 	TableTokenLength  int
 	TableClientID     string
 	TunnelCIDR        string
+	IPv6              bool
+	TunnelCIDR6       string
+	DNSIPv6           string
 	DNS               string
 	MTU               int
 	OutboundInterface string
@@ -102,6 +110,9 @@ func (c *ClientConfig) SetDefaults() {
 	}
 	if c.MTU == 0 {
 		c.MTU = DefaultMTU
+		if c.IPv6 {
+			c.MTU = DualStackMTU
+		}
 	}
 	if c.Obfs == "" {
 		c.Obfs = "none"
@@ -148,6 +159,9 @@ func (c ClientConfig) Validate() error {
 	if err := validateMTU(c.MTU); err != nil {
 		return err
 	}
+	if err := validateIPv6Config(c.IPv6, c.DNSIPv6, c.MTU); err != nil {
+		return err
+	}
 	if c.DNS != "" {
 		if err := validateIPv4(c.DNS, "DNS"); err != nil {
 			return err
@@ -178,6 +192,17 @@ func (c *ServerConfig) SetDefaults() error {
 	}
 	if c.MTU == 0 {
 		c.MTU = DefaultMTU
+		if c.IPv6 {
+			c.MTU = DualStackMTU
+		}
+	}
+	if c.IPv6 {
+		if c.TunnelCIDR6 == "" {
+			c.TunnelCIDR6 = DefaultTunnelCIDR6
+		}
+		if c.DNSIPv6 == "" {
+			c.DNSIPv6 = DefaultDNS6
+		}
 	}
 	if c.TunnelCIDR == "" {
 		c.TunnelCIDR = DefaultTunnelCIDR
@@ -228,6 +253,17 @@ func (c ServerConfig) Validate() error {
 	if err := validateMTU(c.MTU); err != nil {
 		return err
 	}
+	if err := validateIPv6Config(c.IPv6, c.DNSIPv6, c.MTU); err != nil {
+		return err
+	}
+	if c.IPv6 {
+		p, err := netip.ParsePrefix(c.TunnelCIDR6)
+		if err != nil || !usableIPv6(p.Addr()) || p.Bits() < 64 || p.Bits() > 96 || p != p.Masked() {
+			return errors.New("IPv6 tunnel CIDR must be a masked unicast prefix between /64 and /96")
+		}
+	} else if c.TunnelCIDR6 != "" {
+		return errors.New("IPv6 tunnel CIDR requires -ipv6")
+	}
 	if err := validateIPv4(c.DNS, "DNS"); err != nil {
 		return err
 	}
@@ -263,6 +299,29 @@ func validateIPv4(value, field string) error {
 	addr, err := netip.ParseAddr(value)
 	if err != nil || !addr.Is4() {
 		return fmt.Errorf("%s must be a valid IPv4 address", field)
+	}
+	return nil
+}
+
+func usableIPv6(addr netip.Addr) bool {
+	return addr.Is6() && !addr.Is4In6() && addr.IsGlobalUnicast() && addr.Zone() == ""
+}
+
+func validateIPv6Config(enabled bool, dns string, mtu int) error {
+	if !enabled {
+		if dns != "" {
+			return errors.New("IPv6 DNS requires -ipv6")
+		}
+		return nil
+	}
+	if mtu < DualStackMTU {
+		return errors.New("IPv6 requires MTU at least 1280")
+	}
+	if dns != "" {
+		addr, err := netip.ParseAddr(dns)
+		if err != nil || !usableIPv6(addr) {
+			return errors.New("IPv6 DNS must be a valid unicast IPv6 address")
+		}
 	}
 	return nil
 }

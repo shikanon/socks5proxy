@@ -15,14 +15,18 @@ import (
 	"github.com/shikanon/socks5proxy/internal/tunnel/transport"
 )
 
-func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsConfig *tls.Config, kind string, control transport.SocketControl) (result transport.Conn, response protocol.Message, cipher protocol.Cipher, err error) {
+type Options struct{ IPv6 bool }
+
+func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsConfig *tls.Config, kind string, control transport.SocketControl, options ...Options) (result transport.Conn, response protocol.Message, cipher protocol.Cipher, err error) {
+	ipv6 := len(options) > 0 && options[0].IPv6
 	authCtx, authCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer authCancel()
 	conn, err := transport.DialTunnelWithControl(authCtx, serverAddr, tlsConfig, kind, control)
 	if err != nil {
 		return nil, protocol.Message{}, nil, err
 	}
-	stop := context.AfterFunc(authCtx, func() { _ = conn.CloseWithError(1, "authentication canceled") })
+	authConn := conn
+	stop := context.AfterFunc(authCtx, func() { _ = authConn.CloseWithError(1, "authentication canceled") })
 	defer func() {
 		stopped := stop()
 		if err != nil || !stopped || authCtx.Err() != nil {
@@ -46,6 +50,7 @@ func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsC
 	request := protocol.Message{
 		Type: protocol.TypeAuthRequest, Version: protocol.Version,
 		ClientID: clientID, Token: token, Obfs: obfs,
+		IPv6: ipv6,
 	}
 	challenge := ""
 	key := sha256.Sum256([]byte(token))
@@ -84,6 +89,9 @@ func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsC
 	if isTCP && !protocol.VerifyAuthProof(key, protocol.ServerProofRole, challenge, request.Nonce, response) {
 		return nil, protocol.Message{}, nil, errors.New("invalid server authentication proof")
 	}
+	if _, _, _, err := protocol.ValidateIPv6Parameters(response, ipv6); err != nil {
+		return nil, protocol.Message{}, nil, err
+	}
 	cipher, err = tunnel.NewObfuscator(obfs, obfsKey)
 	if err != nil {
 		return nil, protocol.Message{}, nil, err
@@ -91,12 +99,15 @@ func Connect(ctx context.Context, serverAddr, clientID, token, obfs string, tlsC
 	if err := stream.Close(); err != nil {
 		return nil, protocol.Message{}, nil, err
 	}
+	if ipv6 && !isTCP {
+		conn = transport.WithFragmentation(conn)
+	}
 	return conn, response, cipher, nil
 }
 
 // ConnectTable uses the shared table as the credential and daily data mapping.
-func ConnectTable(ctx context.Context, serverAddr, clientID string, table *keytable.Table, control transport.SocketControl) (transport.Conn, protocol.Message, protocol.Cipher, error) {
-	conn, response, cipher, err := Connect(ctx, serverAddr, clientID, table.Credential(), "none", nil, "tcp-table", control)
+func ConnectTable(ctx context.Context, serverAddr, clientID string, table *keytable.Table, control transport.SocketControl, options ...Options) (transport.Conn, protocol.Message, protocol.Cipher, error) {
+	conn, response, cipher, err := Connect(ctx, serverAddr, clientID, table.Credential(), "none", nil, "tcp-table", control, options...)
 	if err != nil {
 		return nil, protocol.Message{}, nil, err
 	}

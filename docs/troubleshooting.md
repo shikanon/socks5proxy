@@ -68,5 +68,8 @@ python3 scripts/test-proxy-resources.py \
 - TLS 失败：确认 `-transport` 两端一致、系统时间正确、`-server-name` 在证书 SAN 内、CA 正确；不要关闭证书验证。`quic` 用 UDP，`tcp` 用 TCP。
 - 认证失败：客户端 ID 与服务端令牌摘要条目一致；摘要计算排除令牌文件末尾换行。避免在日志或工单粘贴令牌及摘要。
 - TUN 创建失败：检查管理员/root 权限。Windows 使用匹配架构的 Wintun ZIP；Linux 检查 `/dev/net/tun`。
-- DNS/联网失败：Linux 客户端检查 `resolvectl status`、`/etc/resolv.conf`；服务端检查 IPv4 forwarding、FORWARD/NAT 及出口网卡。排查后端对应 UDP/TCP 端口与 MTU。
-- 异常退出后路由/DNS 残留：使用同一 `-state-dir` 重启触发恢复，详见[隧道停止与恢复](tunnel.md#停止与恢复)。当前 IPv4 与 kill switch 限制见[安全模型](security.md)。
+- DNS/联网失败：Linux 客户端检查 `resolvectl status`、`/etc/resolv.conf`；服务端检查对应地址族的 forwarding、FORWARD/NAT 及出口网卡。排查后端对应 UDP/TCP 端口与 MTU。
+- IPv4 通、IPv6 不通：确认两端 `-ipv6` 和实际协商地址。服务端运行 `ip -6 route show default`、`ip -6 addr show dev eth0`、`sysctl net.ipv6.conf.all.forwarding`、`ip6tables -S FORWARD`、`ip6tables -t nat -S POSTROUTING`；将 `eth0` 换为真实出口。没有 IPv6 出口时不能访问公网 IPv6；使用外部路由前缀时还需检查回程路由。
+- `IPv6 requires MTU at least 1280`：删去旧配置的 `-mtu 1150`，或设置 `-mtu 1280`；双栈支持 1280–1400。IPv6 UDP 大于 MTU 需要发送端源分片或调整应用报文大小，路由器不会替 IPv6 分片。
+- IPv6 外层端点连接失败：`-server` 使用 `[IPv6地址]:端口`，检查物理 IPv6 默认路由及端点 `/128` 绕行路由；TLS 名称/IP SAN 必须匹配。`-ipv6` 控制内层地址族，不会自动为物理网络提供 IPv6。
+- 异常退出后路由/DNS 残留：使用同一 `-state-dir` 重启触发恢复，详见[隧道停止与恢复](tunnel.md#停止与恢复)。双栈与 kill switch 限制见[安全模型](security.md)。

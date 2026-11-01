@@ -1,12 +1,13 @@
 # 全局代理与指定网址代理
 
-客户端有两种流量范围。`-mode tunnel` 为系统全局 IPv4 隧道，覆盖 TCP、UDP、ICMP 和 DNS，不需要应用逐个设置代理；`-mode proxy -proxy-scope rules` 按目标网站域名分流，命中规则走远程服务端，其余由客户端直连。
+客户端有两种流量范围。`-mode tunnel` 为系统全局隧道，默认 IPv4，两端启用 `-ipv6` 后支持 IPv4 + IPv6，覆盖 TCP、UDP、ICMP/ICMPv6 和 DNS，不需要应用逐个设置代理；`-mode proxy -proxy-scope rules` 按目标网站域名分流，命中规则走远程服务端，其余由客户端直连。
 
 `proxy` 默认 `-proxy-scope all`，表示进入本地 HTTP/SOCKS5 端口的全部 TCP 连接走远程。它仍需要应用配置代理，不能代替系统 TUN。
 
 | 需求 | 客户端参数 | 应用设置 |
 | --- | --- | --- |
 | 系统全局 IPv4 | `-mode tunnel` | 无需 HTTP/SOCKS 代理设置；需要 sudo/root/管理员 |
+| 系统全局 IPv4 + IPv6 | `-mode tunnel -ipv6`，服务端也启用 IPv6 | 同上；服务端需 IPv6 出口 |
 | 已配置代理的应用全部走远程 | `-mode proxy -proxy-scope all` | 指向本地 HTTP/SOCKS5 入口 |
 | 指定网站走远程、其余直连 | `-mode proxy -proxy-scope rules` | 本地 HTTP/SOCKS5 入口，或浏览器/系统 PAC |
 
@@ -32,7 +33,9 @@ sudo ./socks5proxy_client_darwin_arm64 \
 
 该表必须先由服务端生成并复制至客户端，两端身份一致，见[令牌表说明](token-table.md)。
 
-全局模式安装两个 IPv4 `/1` 路由，保留远程隧道端点的物理出口；已有更具体的局域网/主机路由仍优先。公网 IPv6 不受支持，macOS/Windows 和移动端有阻断策略，Linux 需自行限制 IPv6；IPv6 不会转成 IPv4 传输。停止客户端会恢复管理的路由、DNS 和相关状态。现有系统更具体路由及其他 VPN 可能影响结果，详见[网络排障](troubleshooting.md)。不要同时把本项目 proxy 配置在同一个 TUN 出口上。
+全局模式安装两个 IPv4 `/1` 路由，启用 `-ipv6` 时另外安装 `::/1` 和 `8000::/1`，保留远程隧道端点的物理出口；已有更具体的局域网/主机路由仍优先。IPv6 目标需要服务端具备 IPv6 出口，外层连接可以是 IPv4 或 IPv6。双栈命令、NAT66 与路由前缀部署见[隧道部署](tunnel.md#启用-ipv4--ipv6-双栈)。
+
+默认 IPv4 模式仍保留 macOS/Windows 和移动端的 IPv6 阻断策略，Linux 需自行限制 IPv6。停止客户端会恢复管理的路由、DNS 和相关状态。现有系统更具体路由及其他 VPN 可能影响结果，详见[网络排障](troubleshooting.md)。不要同时把本项目 proxy 配置在同一个 TUN 出口上。
 
 ## 指定网站与通配符
 
@@ -99,4 +102,4 @@ PAC 监听和启用 PAC 时的代理监听都必须是回环 IP，不能是 `0.0
 
 `-recv socks5` 对应 PAC 的 `SOCKS5` 指令，需浏览器支持。手动 SOCKS5 客户端应保留域名，例如 curl `socks5h://127.0.0.1:8888`。若应用先解析域名再向代理传 IP，客户端只能匹配 IP，无法还原原域名；命中域名的连接在远程解析，未命中的连接在本机解析。
 
-全局 TUN 不支持网站规则/PAC 参数，携带这些参数会在修改网络前报错。移动端目前仍是全局 IPv4，网址规则只适用于桌面应用代理和 Go `ClientContext`。
+全局 TUN 不支持网站规则/PAC 参数，携带这些参数会在修改网络前报错。移动端提供全局 IPv4 和可选 IPv6 双栈，网址规则只适用于桌面应用代理和 Go `ClientContext`。

@@ -79,7 +79,7 @@ func NewClient(configJSON string, protector SocketProtector) (*Client, error) {
 }
 
 // Connect authenticates before the OS installs VPN routes. The result is JSON
-// containing the negotiated addresses, endpoint_ipv4 and MTU.
+// containing the negotiated addresses, endpoint and MTU.
 func (c *Client) Connect() (string, error) {
 	c.mu.Lock()
 	if c.state != "new" {
@@ -90,14 +90,20 @@ func (c *Client) Connect() (string, error) {
 	c.mu.Unlock()
 	host, port, _ := net.SplitHostPort(c.config.ServerAddr)
 	resolveCtx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
-	addrs, err := net.DefaultResolver.LookupNetIP(resolveCtx, "ip4", host)
+	addrs, err := net.DefaultResolver.LookupNetIP(resolveCtx, "ip", host)
 	cancel()
 	if err != nil || len(addrs) == 0 {
-		err = fmt.Errorf("resolve IPv4 endpoint %q: %v", host, err)
+		err = fmt.Errorf("resolve endpoint %q: %v", host, err)
 		c.fail(err)
 		return "", err
 	}
 	endpoint := addrs[0].Unmap().String()
+	for _, addr := range addrs {
+		if addr.Unmap().Is4() {
+			endpoint = addr.Unmap().String()
+			break
+		}
+	}
 	dialAddr := net.JoinHostPort(endpoint, port)
 	conn, response, cipher, err := c.connectSession(dialAddr)
 	if err != nil {
@@ -124,9 +130,9 @@ func (c *Client) Connect() (string, error) {
 
 func (c *Client) connectSession(addr string) (transport.Conn, protocol.Message, protocol.Cipher, error) {
 	if c.config.table != nil {
-		return session.ConnectTable(c.ctx, addr, c.config.ClientID, c.config.table, c.control)
+		return session.ConnectTable(c.ctx, addr, c.config.ClientID, c.config.table, c.control, session.Options{IPv6: c.config.IPv6})
 	}
-	return session.Connect(c.ctx, addr, c.config.ClientID, c.config.Token, c.config.Obfs, c.tls, c.config.Transport, c.control)
+	return session.Connect(c.ctx, addr, c.config.ClientID, c.config.Token, c.config.Obfs, c.tls, c.config.Transport, c.control, session.Options{IPv6: c.config.IPv6})
 }
 
 // Start begins relaying after the caller has configured the native VPN.
@@ -141,13 +147,14 @@ func (c *Client) Start() error {
 	return nil
 }
 
-// WritePacket copies one raw IPv4 packet from the OS. Under congestion packets
+// WritePacket copies one raw IP packet from the OS. Under congestion packets
 // are dropped instead of blocking the native VPN callback.
 func (c *Client) WritePacket(packet []byte) error {
 	if c.ctx.Err() != nil {
 		return c.ctx.Err()
 	}
-	if len(packet) < 20 || len(packet) > 1400 || packet[0]>>4 != 4 {
+	info, err := protocol.ValidatePacket(packet, c.config.MTU)
+	if err != nil || (info.Source.Is6() && !c.config.IPv6) {
 		c.dropped.Add(1)
 		return nil
 	}
@@ -162,7 +169,7 @@ func (c *Client) WritePacket(packet []byte) error {
 	return nil
 }
 
-// ReadPacket blocks until one raw IPv4 packet arrives or Close is called.
+// ReadPacket blocks until one raw IP packet arrives or Close is called.
 // Use a background thread, never the UI thread.
 func (c *Client) ReadPacket() ([]byte, error) {
 	if c.ctx.Err() != nil {
@@ -251,7 +258,7 @@ func (c *Client) run(conn transport.Conn, cipher protocol.Cipher) {
 				backoff = min(backoff*2, 30*time.Second)
 				continue
 			}
-			p, err := c.config.parameters(response, c.params.EndpointIPv4)
+			p, err := c.config.parameters(response, c.params.Endpoint)
 			if err != nil || p != c.params {
 				_ = conn.CloseWithError(6, "tunnel parameters changed")
 				c.fail(errors.New("server changed tunnel parameters; reconnect the VPN"))
@@ -280,6 +287,7 @@ func (c *Client) relay(conn transport.Conn, cipher protocol.Cipher) error {
 	}()
 	errs := make(chan error, 2)
 	clientIP := netip.MustParseAddr(c.params.ClientIPv4)
+	client6, _ := netip.ParseAddr(c.params.ClientIPv6)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -289,7 +297,7 @@ func (c *Client) relay(conn transport.Conn, cipher protocol.Cipher) error {
 				return
 			case packet := <-c.outbound:
 				payload, info, err := protocol.EncodeDatagram(packet, c.params.MTU, cipher)
-				if err != nil || info.Source != clientIP {
+				if err != nil || !protocol.MatchesLease(info.Source, clientIP, client6) {
 					c.dropped.Add(1)
 					continue
 				}
@@ -315,7 +323,7 @@ func (c *Client) relay(conn transport.Conn, cipher protocol.Cipher) error {
 				return
 			}
 			packet, info, err := protocol.DecodeDatagram(payload, c.params.MTU, cipher)
-			if err != nil || info.Destination != clientIP {
+			if err != nil || !protocol.MatchesLease(info.Destination, clientIP, client6) {
 				c.dropped.Add(1)
 				continue
 			}

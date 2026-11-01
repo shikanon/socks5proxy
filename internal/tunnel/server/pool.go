@@ -54,6 +54,13 @@ func (p *AddressPool) Prefix() netip.Prefix {
 	return p.prefix
 }
 
+// IPv6 reuses the stable IPv4 reservation offset in the low 32 host bits.
+func (p *AddressPool) IPv6(prefix netip.Prefix, addr netip.Addr) netip.Addr {
+	raw := prefix.Masked().Addr().As16()
+	binary.BigEndian.PutUint32(raw[12:], addrUint32(addr)-addrUint32(p.prefix.Addr()))
+	return netip.AddrFrom16(raw)
+}
+
 func (p *AddressPool) Acquire(clientID string) (netip.Addr, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

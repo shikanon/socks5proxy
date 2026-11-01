@@ -9,6 +9,7 @@ import (
 
 const (
 	DatagramTypeIPv4  = 1
+	DatagramTypeIPv6  = 2
 	datagramHeaderLen = 2
 )
 
@@ -24,13 +25,16 @@ type PacketInfo struct {
 }
 
 func EncodeDatagram(packet []byte, mtu int, cipher Cipher) ([]byte, PacketInfo, error) {
-	info, err := ValidateIPv4(packet, mtu)
+	info, err := ValidatePacket(packet, mtu)
 	if err != nil {
 		return nil, PacketInfo{}, err
 	}
 	out := make([]byte, datagramHeaderLen+len(packet))
 	out[0] = Version
 	out[1] = DatagramTypeIPv4
+	if info.Source.Is6() {
+		out[1] = DatagramTypeIPv6
+	}
 	copy(out[datagramHeaderLen:], packet)
 	if cipher != nil {
 		if err := cipher.Encrypt(out[datagramHeaderLen:]); err != nil {
@@ -47,7 +51,7 @@ func DecodeDatagram(datagram []byte, mtu int, cipher Cipher) ([]byte, PacketInfo
 	if datagram[0] != Version {
 		return nil, PacketInfo{}, fmt.Errorf("unsupported datagram version %d", datagram[0])
 	}
-	if datagram[1] != DatagramTypeIPv4 {
+	if datagram[1] != DatagramTypeIPv4 && datagram[1] != DatagramTypeIPv6 {
 		return nil, PacketInfo{}, fmt.Errorf("unsupported datagram type %d", datagram[1])
 	}
 	packet := append([]byte(nil), datagram[datagramHeaderLen:]...)
@@ -56,11 +60,45 @@ func DecodeDatagram(datagram []byte, mtu int, cipher Cipher) ([]byte, PacketInfo
 			return nil, PacketInfo{}, fmt.Errorf("deobfuscate datagram: %w", err)
 		}
 	}
-	info, err := ValidateIPv4(packet, mtu)
+	info, err := ValidatePacket(packet, mtu)
 	if err != nil {
 		return nil, PacketInfo{}, err
 	}
+	if (info.Source.Is6() && datagram[1] != DatagramTypeIPv6) || (info.Source.Is4() && datagram[1] != DatagramTypeIPv4) {
+		return nil, PacketInfo{}, errors.New("datagram type does not match IP version")
+	}
 	return packet, info, nil
+}
+
+func ValidatePacket(packet []byte, mtu int) (PacketInfo, error) {
+	if len(packet) == 0 {
+		return PacketInfo{}, errors.New("empty IP packet")
+	}
+	switch packet[0] >> 4 {
+	case 4:
+		return ValidateIPv4(packet, mtu)
+	case 6:
+		return ValidateIPv6(packet, mtu)
+	default:
+		return PacketInfo{}, errors.New("unsupported IP version")
+	}
+}
+
+func ValidateIPv6(packet []byte, mtu int) (PacketInfo, error) {
+	if len(packet) < 40 || packet[0]>>4 != 6 {
+		return PacketInfo{}, errors.New("invalid IPv6 header")
+	}
+	total := 40 + int(binary.BigEndian.Uint16(packet[4:6]))
+	if total != len(packet) {
+		return PacketInfo{}, errors.New("IPv6 payload length does not match packet length")
+	}
+	if mtu > 0 && total > mtu {
+		return PacketInfo{}, fmt.Errorf("IPv6 packet length %d exceeds MTU %d", total, mtu)
+	}
+	var src, dst [16]byte
+	copy(src[:], packet[8:24])
+	copy(dst[:], packet[24:40])
+	return PacketInfo{Source: netip.AddrFrom16(src), Destination: netip.AddrFrom16(dst), Length: total}, nil
 }
 
 func ValidateIPv4(packet []byte, mtu int) (PacketInfo, error) {

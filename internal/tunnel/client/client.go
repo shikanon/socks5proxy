@@ -106,9 +106,9 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 		var response protocol.Message
 		var cipher protocol.Cipher
 		if table != nil {
-			conn, response, cipher, err = session.ConnectTable(ctx, dialAddr, config.ClientID, table, nil)
+			conn, response, cipher, err = session.ConnectTable(ctx, dialAddr, config.ClientID, table, nil, session.Options{IPv6: config.IPv6})
 		} else {
-			conn, response, cipher, err = connect(ctx, dialAddr, config.ClientID, token, obfs, tlsConfig, config.Transport)
+			conn, response, cipher, err = connect(ctx, dialAddr, config.ClientID, token, obfs, tlsConfig, config.Transport, session.Options{IPv6: config.IPv6})
 		}
 		if err != nil {
 			if !networkApplied {
@@ -125,6 +125,14 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 		}
 
 		if !networkApplied {
+			client6, peer6, dns6, err := protocol.ValidateIPv6Parameters(response, config.IPv6)
+			if err != nil {
+				_ = conn.CloseWithError(4, "invalid IPv6 parameters")
+				return err
+			}
+			if config.DNSIPv6 != "" {
+				dns6, _ = netip.ParseAddr(config.DNSIPv6)
+			}
 			clientIP, err := netip.ParseAddr(response.ClientIPv4)
 			if err != nil || !clientIP.Is4() {
 				_ = conn.CloseWithError(4, "invalid client address")
@@ -153,14 +161,17 @@ func Run(ctx context.Context, config tunnel.ClientConfig) error {
 				return err
 			}
 			networkManager, err = tunnelnet.NewClientManager(tunnelnet.ClientOptions{
-				TUNName:      tunDevice.Name(),
-				ClientIP:     clientIP,
-				ServerIP:     serverIP,
-				TunnelPeer:   peerIP,
-				DNS:          dnsIP,
-				MTU:          response.MTU,
-				StateDir:     config.StateDir,
-				SkipLinuxDNS: config.SkipLinuxDNS,
+				TUNName:        tunDevice.Name(),
+				ClientIP:       clientIP,
+				ServerIP:       serverIP,
+				TunnelPeer:     peerIP,
+				ClientIPv6:     client6,
+				TunnelPeerIPv6: peer6,
+				DNSIPv6:        dns6,
+				DNS:            dnsIP,
+				MTU:            response.MTU,
+				StateDir:       config.StateDir,
+				SkipLinuxDNS:   config.SkipLinuxDNS,
 			}, nil)
 			if err != nil {
 				_ = conn.CloseWithError(5, "network setup failed")
@@ -202,8 +213,9 @@ func connect(
 	serverAddr, clientID, token, obfs string,
 	tlsConfig *tls.Config,
 	kind string,
+	options ...session.Options,
 ) (result transport.Conn, response protocol.Message, cipher protocol.Cipher, err error) {
-	return session.Connect(ctx, serverAddr, clientID, token, obfs, tlsConfig, kind, nil)
+	return session.Connect(ctx, serverAddr, clientID, token, obfs, tlsConfig, kind, nil, options...)
 }
 
 func relay(
@@ -216,6 +228,7 @@ func relay(
 	stats *counters,
 ) error {
 	clientIP := netip.MustParseAddr(response.ClientIPv4)
+	client6, _ := netip.ParseAddr(response.ClientIPv6)
 	mtu := response.MTU
 	childCtx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
@@ -240,7 +253,7 @@ func relay(
 				return
 			}
 			payload, info, err := protocol.EncodeDatagram(packet, mtu, cipher)
-			if err != nil || info.Source != clientIP {
+			if err != nil || !protocol.MatchesLease(info.Source, clientIP, client6) {
 				stats.dropped.Add(1)
 				continue
 			}
@@ -265,7 +278,7 @@ func relay(
 				return
 			}
 			packet, info, err := protocol.DecodeDatagram(payload, mtu, cipher)
-			if err != nil || info.Destination != clientIP {
+			if err != nil || !protocol.MatchesLease(info.Destination, clientIP, client6) {
 				stats.dropped.Add(1)
 				continue
 			}
@@ -314,16 +327,24 @@ func resolveServer(ctx context.Context, serverAddr, configuredName string) (neti
 	}
 	if addr, err := netip.ParseAddr(host); err == nil {
 		addr = addr.Unmap()
-		if !addr.Is4() {
-			return netip.Addr{}, "", errors.New("tunnel server endpoint must resolve to IPv4")
+		if !addr.IsValid() || addr.IsUnspecified() || addr.IsMulticast() || addr.Zone() != "" {
+			return netip.Addr{}, "", errors.New("invalid tunnel server endpoint")
 		}
 		return addr, serverName, nil
 	}
-	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", host)
-	if err != nil || len(addrs) == 0 {
+	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
 		return netip.Addr{}, "", fmt.Errorf("resolve tunnel server %q: %w", host, err)
 	}
-	return addrs[0].Unmap(), serverName, nil
+	for _, addr := range addrs {
+		if addr.Unmap().Is4() {
+			return addr.Unmap(), serverName, nil
+		}
+	}
+	if len(addrs) > 0 {
+		return addrs[0], serverName, nil
+	}
+	return netip.Addr{}, "", fmt.Errorf("no addresses for tunnel server %q", host)
 }
 
 func readToken(path string) (string, error) {
@@ -358,9 +379,5 @@ func waitBackoff(ctx context.Context, duration time.Duration) error {
 }
 
 func sameTunnelParameters(a, b protocol.Message) bool {
-	return a.ClientIPv4 == b.ClientIPv4 &&
-		a.ServerIPv4 == b.ServerIPv4 &&
-		a.MTU == b.MTU &&
-		a.DNSIPv4 == b.DNSIPv4 &&
-		a.Obfs == b.Obfs
+	return protocol.SameTunnelParameters(a, b)
 }

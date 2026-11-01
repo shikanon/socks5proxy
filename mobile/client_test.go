@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -212,6 +214,9 @@ func serveSession(ctx context.Context, l transport.Listener, kind, obfs string, 
 		return
 	}
 	response := protocol.Message{Type: protocol.TypeAuthResponse, Version: protocol.Version, ClientIPv4: "10.0.0.2", ServerIPv4: "10.0.0.1", DNSIPv4: "1.1.1.1", MTU: mtu, Obfs: obfs}
+	if request.IPv6 {
+		response.IPv6, response.ClientIPv6, response.ServerIPv6, response.DNSIPv6 = true, "fd00::2", "fd00::1", "2001:db8::53"
+	}
 	if kind != "quic" {
 		response.Proof = protocol.AuthProof(key, protocol.ServerProofRole, challenge, request.Nonce, response)
 	}
@@ -220,6 +225,9 @@ func serveSession(ctx context.Context, l transport.Listener, kind, obfs string, 
 		return
 	}
 	_ = s.Close()
+	if request.IPv6 && kind == "quic" {
+		c = transport.WithFragmentation(c)
+	}
 	if ready != nil {
 		select {
 		case ready <- c:
@@ -318,51 +326,129 @@ func TestClientPacketRoundTrip(t *testing.T) {
 }
 
 func TestClientReconnect(t *testing.T) {
-	for _, changed := range []bool{false, true} {
-		t.Run(map[bool]string{false: "same_lease", true: "changed_lease"}[changed], func(t *testing.T) {
-			l, _, ctx := testListener(t, "tcp-plain")
-			ready := make(chan transport.Conn, 2)
-			go serveSession(ctx, l, "tcp-plain", "none", 1150, ready, nil)
+	for _, dual := range []bool{false, true} {
+		for _, changed := range []bool{false, true} {
+			t.Run(map[bool]string{false: "ipv4/", true: "dual/"}[dual]+map[bool]string{false: "same_lease", true: "changed_lease"}[changed], func(t *testing.T) {
+				l, _, ctx := testListener(t, "tcp-plain")
+				ready := make(chan transport.Conn, 2)
+				mtu := 1150
+				if dual {
+					mtu = 1280
+				}
+				go serveSession(ctx, l, "tcp-plain", "none", mtu, ready, nil)
+				cfg := testConfig()
+				cfg.ServerAddr = l.Addr().String()
+				cfg.IPv6, cfg.MTU = dual, 1400
+				p := &protector{allow: true}
+				c, _ := NewClient(configJSON(t, cfg), p)
+				defer c.Close()
+				if _, err := c.Connect(); err != nil {
+					t.Fatal(err)
+				}
+				_ = c.Start()
+				first := <-ready
+				_ = first.CloseWithError(0, "force reconnect")
+				if changed {
+					mtu++
+				}
+				go serveSession(ctx, l, "tcp-plain", "none", mtu, ready, nil)
+				ticker := time.NewTicker(10 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					status := c.Status()
+					if changed && strings.Contains(status, `"state":"error"`) {
+						if !strings.Contains(status, "changed tunnel parameters") {
+							t.Fatal(status)
+						}
+						break
+					}
+					if !changed && p.calls.Load() == 2 && strings.Contains(status, `"state":"connected"`) {
+						peer := <-ready
+						_ = c.WritePacket(ipPacket(2, 1))
+						if _, err := peer.ReceiveDatagram(ctx); err != nil {
+							t.Fatal("reconnected transport unusable", err)
+						}
+						break
+					}
+					select {
+					case <-ctx.Done():
+						t.Fatal("reconnect did not settle", status)
+					case <-ticker.C:
+					}
+				}
+			})
+		}
+	}
+}
+
+func mobileIPv6Packet(src, dst string) []byte {
+	p := make([]byte, 1280)
+	p[0], p[6], p[7] = 0x60, 17, 64
+	binary.BigEndian.PutUint16(p[4:6], 1240)
+	a, b := netip.MustParseAddr(src).As16(), netip.MustParseAddr(dst).As16()
+	copy(p[8:24], a[:])
+	copy(p[24:40], b[:])
+	return p
+}
+
+func TestClientIPv6PacketRoundTrip(t *testing.T) {
+	for _, kind := range []string{"quic", "tcp", "tcp-plain"} {
+		t.Run(kind, func(t *testing.T) {
+			l, clientTLS, ctx := testListener(t, kind)
+			ready := make(chan transport.Conn, 1)
+			go serveSession(ctx, l, kind, "none", 1280, ready, nil)
 			cfg := testConfig()
-			cfg.ServerAddr = l.Addr().String()
-			p := &protector{allow: true}
-			c, _ := NewClient(configJSON(t, cfg), p)
+			cfg.ServerAddr, cfg.Transport, cfg.IPv6 = l.Addr().String(), kind, true
+			c, err := NewClient(configJSON(t, cfg), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.tls = clientTLS
 			defer c.Close()
 			if _, err := c.Connect(); err != nil {
 				t.Fatal(err)
 			}
-			_ = c.Start()
-			first := <-ready
-			_ = first.CloseWithError(0, "force reconnect")
-			mtu := 1150
-			if changed {
-				mtu--
+			if err := c.Start(); err != nil {
+				t.Fatal(err)
 			}
-			go serveSession(ctx, l, "tcp-plain", "none", mtu, ready, nil)
-			ticker := time.NewTicker(10 * time.Millisecond)
-			defer ticker.Stop()
-			for {
-				status := c.Status()
-				if changed && strings.Contains(status, `"state":"error"`) {
-					if !strings.Contains(status, "changed tunnel parameters") {
-						t.Fatal(status)
-					}
-					break
+			peer := <-ready
+			good := mobileIPv6Packet("fd00::2", "2001:db8::1")
+			_ = c.WritePacket(mobileIPv6Packet("fd00::99", "2001:db8::1"))
+			_ = c.WritePacket(good)
+			payload, err := peer.ReceiveDatagram(ctx)
+			packet, _, decodeErr := protocol.DecodeDatagram(payload, 1280, nil)
+			if err != nil || decodeErr != nil || !bytes.Equal(packet, good) {
+				t.Fatal("invalid IPv6 source escaped", err, decodeErr)
+			}
+			good = mobileIPv6Packet("2001:db8::1", "fd00::2")
+			bad, _, _ := protocol.EncodeDatagram(mobileIPv6Packet("2001:db8::1", "fd00::99"), 1280, nil)
+			payload, _, _ = protocol.EncodeDatagram(good, 1280, nil)
+			_ = peer.SendDatagram(bad)
+			_ = peer.SendDatagram(payload)
+			result := make(chan []byte, 1)
+			go func() { p, _ := c.ReadPacket(); result <- p }()
+			select {
+			case p := <-result:
+				if !bytes.Equal(p, good) {
+					t.Fatal("invalid IPv6 destination escaped")
 				}
-				if !changed && p.calls.Load() == 2 && strings.Contains(status, `"state":"connected"`) {
-					peer := <-ready
-					_ = c.WritePacket(ipPacket(2, 1))
-					if _, err := peer.ReceiveDatagram(ctx); err != nil {
-						t.Fatal("reconnected transport unusable", err)
-					}
-					break
-				}
-				select {
-				case <-ctx.Done():
-					t.Fatal("reconnect did not settle", status)
-				case <-ticker.C:
-				}
+			case <-ctx.Done():
+				t.Fatal("IPv6 response not received")
 			}
 		})
+	}
+}
+
+func TestIPv6EndpointSocketProtection(t *testing.T) {
+	cfg := testConfig()
+	cfg.ServerAddr, cfg.Transport = "[::1]:443", "quic"
+	p := &protector{}
+	c, err := NewClient(configJSON(t, cfg), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := c.Connect(); err == nil || !strings.Contains(err.Error(), "protection failed") || p.calls.Load() != 1 {
+		t.Fatal("IPv6 UDP socket escaped protection", err, p.calls.Load())
 	}
 }

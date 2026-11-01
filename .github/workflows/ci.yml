@@ -62,6 +62,37 @@ jobs:
           go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
           staticcheck ./...
 
+  ipv6-tunnel:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - transport: quic
+            endpoint_ipv6: "false"
+          - transport: tcp
+            endpoint_ipv6: "false"
+          - transport: tcp-table
+            endpoint_ipv6: "false"
+          - transport: quic
+            endpoint_ipv6: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Linux dual-stack TUN acceptance
+        run: |
+          sudo env "PATH=$PATH" TUNNEL_IPV6=true \
+            TUNNEL_TRANSPORT=${{ matrix.transport }} \
+            TUNNEL_ENDPOINT_IPV6=${{ matrix.endpoint_ipv6 }} \
+            ./scripts/test-tunnel-linux.sh
+
   cross-build:
     runs-on: ubuntu-latest
     env:

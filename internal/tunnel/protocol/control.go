@@ -33,6 +33,11 @@ type Message struct {
 	MTU        int    `json:"mtu,omitempty"`
 	DNSIPv4    string `json:"dns_ipv4,omitempty"`
 	Error      string `json:"error,omitempty"`
+	// Append optional fields to preserve the JSON order used by legacy proofs.
+	IPv6       bool   `json:"ipv6,omitempty"`
+	ClientIPv6 string `json:"client_ipv6,omitempty"`
+	ServerIPv6 string `json:"server_ipv6,omitempty"`
+	DNSIPv6    string `json:"dns_ipv6,omitempty"`
 }
 
 func WriteMessage(w io.Writer, msg Message) error {
