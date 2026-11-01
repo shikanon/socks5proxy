@@ -21,7 +21,7 @@ chmod +x socks5proxy_client_linux_amd64
 
 macOS 替换为相应 darwin 文件名。Windows 解压 ZIP 后运行 EXE；仅使用应用代理不需要管理员权限，TUN 需要管理员/root 权限。[应用代理及同机示例](proxy.md)、[全局隧道](tunnel.md)、[问题排查](troubleshooting.md)分别覆盖不同模式。
 
-Apple Silicon（M1/M2/M3/M4 等）使用 `darwin_arm64`，不需要 Rosetta。从 [v0.2.0](https://github.com/shikanon/socks5proxy/releases/tag/v0.2.0) 下载 `socks5proxy_client_darwin_arm64` 与 `SHA256SUMS`，按下文校验后运行：
+Apple Silicon（M1/M2/M3/M4 等）使用 `darwin_arm64`，不需要 Rosetta。从 [v0.2.1](https://github.com/shikanon/socks5proxy/releases/tag/v0.2.1) 下载 `socks5proxy_client_darwin_arm64` 与 `SHA256SUMS`，按下文校验后运行：
 
 ```bash
 chmod +x socks5proxy_client_darwin_arm64
@@ -76,7 +76,7 @@ ARM64 ZIP 包使用 ARM64 EXE 和 ARM64 Wintun DLL。不要混用不同架构的
 发布前可在独立目录本地构建，避免混入旧的 `dist/` 产物：
 
 ```bash
-VERSION=v0.2.0 OUTPUT_DIR="$PWD/dist/v0.2.0-local" bash scripts/build-desktop.sh
+VERSION=v0.2.1 OUTPUT_DIR="$PWD/dist/v0.2.1-local" bash scripts/build-desktop.sh
 ```
 
 ## 移动构建物

@@ -23,7 +23,8 @@ gomobile init
 build_dir="$(mktemp -d "${TMPDIR:-/tmp}/socks5proxy-mobile.XXXXXX")"
 trap 'rm -rf "$build_dir"' EXIT
 cp go.mod go.sum ./*.go "$build_dir/"
-cp -R mobile internal "$build_dir/"
+# The tunnel core imports root proxy code, which also depends on routing.
+cp -R mobile internal routing "$build_dir/"
 cd "$build_dir"
 export GOFLAGS="-mod=mod"
 go mod edit "-require=golang.org/x/mobile@$mobile_version"
