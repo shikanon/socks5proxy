@@ -63,7 +63,7 @@ apps/ios/          `iOS 原生应用与 Packet Tunnel 扩展`
 - [Android / iOS 构建与使用](./docs/mobile-clients.md)
 - [应用代理与同机部署](./docs/proxy.md)
 - [全局代理、指定网站与通配符规则](./docs/proxy-scopes.md)
-- [完整社区PAC、ChatGPT/Codex登录与GitHub域名清单](./examples/community-pac/README.md)
+- [完整社区PAC、AI/GitHub/X与Meta域名清单及查询命令](./examples/community-pac/README.md)
 - [Linux TCP默认BBR与进程级恢复](./docs/tcp-bbr.md)
 - [安全与威胁模型](./docs/security.md)
 - [连接、资源与网络排障](./docs/troubleshooting.md)
@@ -102,6 +102,17 @@ go run ./cmd/client -mode proxy -server 127.0.0.1:18888 \
 ```
 
 浏览器手动代理设为 `127.0.0.1:8888`，或自动代理配置 URL 设为 `http://127.0.0.1:8090/proxy.pac`。可通过 `-rules-file examples/proxy-domains.txt` 加载规则。完整[分流与全局模式说明](./docs/proxy-scopes.md)包含 macOS 启动命令及 HTTPS/IPv6 范围。
+
+## 域名代理查询
+
+完整社区PAC提供只读的一行查询命令：
+
+```bash
+./proxy-route github.com auth.openai.com www.doubao.com
+./proxy-route --list
+```
+
+显示代理/直连与命中原因，默认读取当前回环PAC；`--offline` 查询仓库文件，`--json` 输出结构化结果。仅代表PAC规则选择，不是实时转发日志。详情见[域名清单说明](./examples/community-pac/README.md#一行查询命令)。
 
 两端 proxy 模式均支持以下资源参数：
 

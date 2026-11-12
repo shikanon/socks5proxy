@@ -1,11 +1,11 @@
-# 社区 PAC、AI 登录与 GitHub 域名
+# 社区 PAC、AI 登录、GitHub、X 与 Meta 域名
 
 `examples/community-pac/domains.json` 是可维护的明确域名清单，`community-rules.pac` 是固定 GFWList 提交的完整生成快照，`proxy.pac` 是可直接使用的合并产物。
 
 ## 分流顺序
 
 1. 局域网、回环和豆包/字节/飞书/火山后缀直连。
-2. ChatGPT/Codex、Claude、GitHub 及清单内支持域名走代理。
+2. ChatGPT/Codex、Claude、GitHub、X/Twitter、Meta 及清单内支持域名走代理。
 3. 其余按完整社区清单选择；未命中直连。
 
 服务后缀覆盖根域与点边界子域，不按 URL 文本匹配。共享 WorkOS、验证码、Stripe、Sentry 等依赖按精确主机匹配，不接管整个共享厂商域名。`localhost:1455` 等 Codex OAuth 回调继续直连。豆包保护是域名例外，不是按进程完全排除。
@@ -13,6 +13,39 @@
 ChatGPT/Codex 规则包含 `openai.com`（含 `auth.openai.com`、`auth0.openai.com`、`api.openai.com`）、`chatgpt.com`（含 `ws.chatgpt.com`）、`oaistatic.com`、`oaiusercontent.com`、`oaistatsig.com`、`openaimerge.com` 及 OpenAI 官方网络说明列出的支持域名。
 
 GitHub 规则包含 `github.com`、`githubusercontent.com`、`githubassets.com`、`github.io`、`githubapp.com`、`github.dev`、`githubcopilot.com`、`ghcr.io`、`githubstatus.com`，以及精确主机 `github-cloud.s3.amazonaws.com`。HTTPS clone、API、raw、release、LFS 与包资源覆盖在这些域名内；SSH Git 和不读取系统代理的工具不由 PAC 自动接管。
+
+## X 与 Meta 服务分组
+
+X/Twitter：`x.com`、`twitter.com`、`t.co`、`twimg.com`、`tweetdeck.com`，包含子域名中的图片、视频、API等主机。
+
+Meta/Facebook/Messenger：`meta.com`、`meta.ai`、`facebook.com`、`facebook.net`、`fb.com`、`fb.me`、`fbcdn.net`、`fbsbx.com`、`messenger.com`、`m.me`。
+
+Instagram/Threads：`instagram.com`、`cdninstagram.com`、`ig.me`、`threads.com`、`threads.net`。
+
+WhatsApp：`whatsapp.com`、`whatsapp.net`、`wa.me`；Quest/Oculus：`oculus.com`、`oculuscdn.com`。
+
+所有后缀采用根域与点边界子域匹配；没有新增整个第三方CDN、云存储域名，没有加入独立的xAI域名。此列表覆盖常用服务及资源，并非这些公司的全部域名资产；新增服务仍需按实际使用补充。PAC不接管非HTTP/HTTPS协议、UDP或不采用系统代理的应用，因此不能由域名收录推断WhatsApp原生通话等功能已可用。
+
+```bash
+./proxy-route x.com pbs.twimg.com facebook.com instagram.com threads.com web.whatsapp.com meta.ai
+```
+
+## 一行查询命令
+
+从仓库根目录运行：
+
+```bash
+./proxy-route github.com
+./proxy-route google.com auth.openai.com claude.ai www.doubao.com
+./proxy-route --list
+./proxy-route --json github.com
+```
+
+默认读取回环服务 `http://127.0.0.1:8090/proxy.pac` 的当前内容，逐域名显示代理/直连、入口地址和命中原因。不带参数等同 `--list`，列出明确代理后缀/精确主机以及社区规则数量；完整社区正则按域名查询，不冒充有限的域名枚举。
+
+未启动PAC时命令报错，不会悄悄改用旧文件。离线检查仓库文件使用 `./proxy-route --offline github.com`；检查指定可信本地PAC使用 `./proxy-route --pac 文件路径 github.com`。需要 Node.js；此机已有桌面运行时可复用，也支持 `NODE_BINARY` 指定现有 Node 可执行文件。命令不会安装软件或修改PATH/代理/DNS/路由。
+
+这是**PAC规则选择**，不是实际访问历史或转发成功证明。PAC是否被某应用采用仍取决于系统设置和应用行为。传入URL可按其路径查询，但输出只显示主机，不输出查询参数、OAuth授权码或密码；拒绝URL内用户名/密码。`--pac`仅用于可信本地生成文件，不能作为运行不可信JavaScript的安全环境。
 
 ## 生成、校验、提供
 

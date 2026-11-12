@@ -1,0 +1,20 @@
+#!/bin/bash
+# Read-only domain route query. Uses Node.js, never changes proxy/network settings.
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+if [ -n "${NODE_BINARY:-}" ]; then
+  NODE="$NODE_BINARY"
+elif command -v node >/dev/null 2>&1; then
+  NODE="$(command -v node)"
+else
+  NODE=''
+  # Optional existing desktop runtime; no installation or absolute user path.
+  for candidate in "$HOME/Library/Application Support/DoubaoWork/sandbox_runtime/bases/"*/bin/node; do
+    if [ -x "$candidate" ]; then NODE="$candidate"; break; fi
+  done
+fi
+if [ -z "$NODE" ] || [ ! -x "$NODE" ]; then
+  printf '%s\n' '未找到 Node.js。安装 Node.js 后重试，或通过 NODE_BINARY 指定现有可执行文件。' >&2
+  exit 1
+fi
+exec "$NODE" "$ROOT/scripts/proxy-route.js" "$@"

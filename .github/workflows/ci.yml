@@ -33,6 +33,7 @@ jobs:
           cmp examples/community-pac/proxy.pac /tmp/community-proxy.pac
           node scripts/test-community-pac.js /tmp/community-proxy.pac
           python3 scripts/test-community-pac-tools.py
+          node scripts/test-proxy-route.js
 
       - name: Run go vet
         run: go vet ./...

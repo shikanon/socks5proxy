@@ -21,7 +21,17 @@
     "github": [
       "github.com", "githubusercontent.com", "githubassets.com", "github.io",
       "githubapp.com", "github.dev", "githubcopilot.com", "ghcr.io", "githubstatus.com"
-    ]
+    ],
+    "x_twitter": ["x.com", "twitter.com", "t.co", "twimg.com", "tweetdeck.com"],
+    "meta_facebook_messenger": [
+      "meta.com", "meta.ai", "facebook.com", "facebook.net", "fb.com", "fb.me",
+      "fbcdn.net", "fbsbx.com", "messenger.com", "m.me"
+    ],
+    "meta_instagram_threads": [
+      "instagram.com", "cdninstagram.com", "ig.me", "threads.com", "threads.net"
+    ],
+    "meta_whatsapp": ["whatsapp.com", "whatsapp.net", "wa.me"],
+    "meta_quest": ["oculus.com", "oculuscdn.com"]
   },
   "proxy_exact_hosts": [
     "cdn.workos.com", "challenges.cloudflare.com", "forwarder.workos.com",
