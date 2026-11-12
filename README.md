@@ -63,6 +63,8 @@ apps/ios/          `iOS 原生应用与 Packet Tunnel 扩展`
 - [Android / iOS 构建与使用](./docs/mobile-clients.md)
 - [应用代理与同机部署](./docs/proxy.md)
 - [全局代理、指定网站与通配符规则](./docs/proxy-scopes.md)
+- [完整社区PAC、ChatGPT/Codex登录与GitHub域名清单](./examples/community-pac/README.md)
+- [Linux TCP默认BBR与进程级恢复](./docs/tcp-bbr.md)
 - [安全与威胁模型](./docs/security.md)
 - [连接、资源与网络排障](./docs/troubleshooting.md)
 
@@ -86,7 +88,7 @@ curl --noproxy "" --proxy http://127.0.0.1:8888 https://example.com/
 
 浏览器设置 HTTP/HTTPS 代理为 `127.0.0.1:8888`。若客户端改为 `-recv socks5`，浏览器也必须选择 SOCKS5，curl 使用 `--proxy socks5h://127.0.0.1:8888`。代理目标不能指回这两个监听端口。跨机器部署时，客户端的 `-server` 改为服务端地址；完整说明见[应用代理部署](./docs/proxy.md)。
 
-`-passwd` **没有默认值，必须显式设置**；`-type` 默认 `random`，两端必须相同。客户端 `-recv` 默认 `http`。应用代理只处理主动配置代理的应用；全局 IPv4/IPv6 流量请使用[隧道模式](./docs/tunnel.md)，双栈需两端启用 `-ipv6`，服务端出口具备 IPv6 路由。
+`-passwd` **没有默认值，必须显式设置**；`-type` 默认 `random`，两端必须相同。客户端 `-recv` 默认 `http`。Linux数据TCP socket默认尝试BBR，不支持时保留内核算法；macOS/Windows/Android不改平台算法，QUIC不受影响，见[BBR范围与恢复](./docs/tcp-bbr.md)。应用代理只处理主动配置代理的应用；全局 IPv4/IPv6 流量请使用[隧道模式](./docs/tunnel.md)，双栈需两端启用 `-ipv6`，服务端出口具备 IPv6 路由。
 
 桌面隧道默认 `-disconnect-policy direct`：每 2 秒通过隧道查询 DNS，验证实际转发路径，并在服务端支持时检查远端心跳。连续 10 秒没有有效转发响应时，即使心跳正常，也开始撤销隧道路由、DNS 和程序设置的 IPv6 阻断规则，关闭 TUN，恢复系统原来的普通流量。直连期间每次连接失败后等待 5 秒再重试，认证和转发检查成功后重新启用隧道。`-daemon` 增加独立父进程，在客户端崩溃后恢复网络并重启；安装为系统后台服务和配置文件示例见[守护进程说明](./docs/watchdog.md)。需要断线期间保留隧道路由时显式使用 `-disconnect-policy block`。
 

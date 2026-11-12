@@ -8,6 +8,8 @@ import (
 	"net"
 	"strconv"
 	"time"
+
+	"github.com/shikanon/socks5proxy/internal/tcpopts"
 )
 
 func handleHandshake(client io.ReadWriter, auth socks5Auth, _ []byte, proto *ProtocolVersion) error {
@@ -113,6 +115,7 @@ func handleClientRequest(client *net.TCPConn, auth socks5Auth) error {
 
 func handleServerSession(ctx context.Context, client net.Conn, auth socks5Auth, options ProxyOptions) error {
 	defer client.Close()
+	tcpopts.ApplyDefault(client)
 	handshakeCtx, cancel := context.WithTimeout(ctx, options.HandshakeTimeout)
 	defer cancel()
 	client.SetDeadline(time.Now().Add(options.HandshakeTimeout))

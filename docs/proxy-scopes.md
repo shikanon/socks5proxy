@@ -87,6 +87,10 @@ api?.example.net
 
 启动时使用 `-rules-file ./websites.txt`，可与 `-proxy-domains` 合并，重复条目会去重。仓库提供[示例规则文件](../examples/proxy-domains.txt)。单文件最多 1 MiB，合并去重后最多 1024 条；启动时加载，修改后重启客户端。`rules` 模式必须有至少一条规则；`all` 模式不能附带网站规则。
 
+## 完整社区PAC与AI/GitHub域名
+
+需要社区清单、豆包相关域名优先直连，以及ChatGPT/Codex登录资源与GitHub域名时，使用 [examples/community-pac](../examples/community-pac/README.md)。它以 JSON 清单和固定完整社区快照生成外部PAC，不受内部1024条上限截断；客户端保持 `-proxy-scope all`，PAC决定请求是否进入代理。
+
 ## 浏览器与 PAC
 
 有两种配置方式：

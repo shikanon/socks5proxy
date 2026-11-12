@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "proxy": "127.0.0.1:8888",
+  "direct_suffixes": [
+    "doubao.com", "doubaowork.com", "bytedance.com", "byted.org",
+    "byteoversea.com", "bytedance.net", "larkoffice.com", "feishu.cn",
+    "larksuite.com", "volcengine.com", "volces.com", "volcengineapi.com",
+    "byteimg.com", "ibytedtos.com", "bytedns.net", "bytedns1.com",
+    "bytednsdoc.com", "bytetcdn.com", "snssdk.com", "amemv.com"
+  ],
+  "proxy_groups": {
+    "openai_chatgpt_codex": [
+      "openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com",
+      "oaistatsig.com", "openaimerge.com"
+    ],
+    "claude": [
+      "anthropic.com", "claude.ai", "claude.com", "claudeusercontent.com",
+      "claudemcpcontent.com"
+    ],
+    "openai_support": ["ct.sendgrid.net", "intercom.io", "intercomcdn.com"],
+    "github": [
+      "github.com", "githubusercontent.com", "githubassets.com", "github.io",
+      "githubapp.com", "github.dev", "githubcopilot.com", "ghcr.io", "githubstatus.com"
+    ]
+  },
+  "proxy_exact_hosts": [
+    "cdn.workos.com", "challenges.cloudflare.com", "forwarder.workos.com",
+    "frontend-apps-multi-region.workos.com", "images.workoscdn.com",
+    "setup.workos.com", "workos.imgix.net", "humb.apple.com", "js.stripe.com",
+    "o207216.ingest.sentry.io", "o33249.ingest.sentry.io",
+    "rum.browser-intake-datadoghq.com", "github-cloud.s3.amazonaws.com"
+  ],
+  "community": {
+    "project": "gfwlist/gfwlist",
+    "commit": "6de6262bd1bdb6c272b29e44bdbe2ef657c80b14",
+    "source_url": "https://raw.githubusercontent.com/gfwlist/gfwlist/6de6262bd1bdb6c272b29e44bdbe2ef657c80b14/gfwlist.txt",
+    "generator": "genpac 3.0.1",
+    "snapshot": "community-rules.pac"
+  },
+  "sources": [
+    "https://help.openai.com/en/articles/9247338-network-recommendations-for-chatgpt-errors-on-web-and-apps",
+    "https://developers.openai.com/codex/auth",
+    "https://code.claude.com/docs/en/network-config?nl=1",
+    "https://docs.github.com/en/actions/reference/runners/github-hosted-runners"
+  ]
+}

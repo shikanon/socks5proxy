@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/shikanon/socks5proxy/internal/tcpopts"
 	"github.com/shikanon/socks5proxy/routing"
 )
 
@@ -133,7 +134,11 @@ func serveProxy(ctx context.Context, listener net.Listener, options ProxyOptions
 }
 
 func dialProxy(ctx context.Context, address string, options ProxyOptions) (net.Conn, error) {
-	return (&net.Dialer{Timeout: options.DialTimeout}).DialContext(ctx, "tcp", address)
+	conn, err := (&net.Dialer{Timeout: options.DialTimeout}).DialContext(ctx, "tcp", address)
+	if err == nil {
+		tcpopts.ApplyDefault(conn)
+	}
+	return conn, err
 }
 
 // proxyActivity refreshes both endpoints on progress in either direction.

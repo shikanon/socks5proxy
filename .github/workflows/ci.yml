@@ -27,6 +27,13 @@ jobs:
         run: |
           test -z "$(gofmt -l .)"
 
+      - name: Check community PAC domain list and generated output
+        run: |
+          python3 scripts/build-community-pac.py --output /tmp/community-proxy.pac
+          cmp examples/community-pac/proxy.pac /tmp/community-proxy.pac
+          node scripts/test-community-pac.js /tmp/community-proxy.pac
+          python3 scripts/test-community-pac-tools.py
+
       - name: Run go vet
         run: go vet ./...
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/shikanon/socks5proxy/internal/tcpopts"
 	"github.com/shikanon/socks5proxy/internal/tunnel/protocol"
 )
 
@@ -62,6 +63,7 @@ func dialTCPWithControl(ctx context.Context, addr string, cfg *tls.Config, secur
 	if err != nil {
 		return nil, err
 	}
+	tcpopts.ApplyDefault(raw)
 	var wire net.Conn = raw
 	if secure {
 		tc := tls.Client(raw, cfg)
@@ -114,6 +116,7 @@ func (l *tcpListener) Accept(ctx context.Context) (Conn, error) {
 		_ = raw.Close()
 		return nil, ctx.Err()
 	}
+	tcpopts.ApplyDefault(raw)
 	if tc, ok := raw.(*net.TCPConn); ok {
 		_ = tc.SetKeepAlive(true)
 		_ = tc.SetKeepAlivePeriod(keepAlivePeriod)
