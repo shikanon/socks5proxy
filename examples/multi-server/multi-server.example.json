@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "listen": ["127.0.0.1", 18900],
+  "servers": [
+    {"name": "primary", "endpoint": "192.0.2.10:8080"},
+    {"name": "backup", "endpoint": "198.51.100.20:29889"}
+  ],
+  "probe_seconds": 10,
+  "probe_timeout_seconds": 8,
+  "connect_timeout_seconds": 3,
+  "failure_threshold": 2,
+  "recovery_threshold": 2
+}

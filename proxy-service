@@ -1,0 +1,25 @@
+#!/bin/bash
+# Control this installed user's primary/backup deployment; no remote login or global routing.
+set -euo pipefail
+ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+ACTION="${1:-status}"
+if [ "$#" -gt 1 ]; then
+  printf '%s\n' 'Usage: ./proxy-service [status|start|stop|auto|primary|backup]' >&2
+  exit 2
+fi
+case "$ACTION" in
+  status|start|stop|auto|primary|backup) ;;
+  *) printf '%s\n' 'Usage: ./proxy-service [status|start|stop|auto|primary|backup]' >&2; exit 2 ;;
+esac
+RUNTIME="$ROOT/dist/overseas-proxy"
+if [ ! -s "$RUNTIME/multi-server.json" ]; then
+  printf '%s\n' 'No installed multi-server runtime in this checkout.' >&2
+  exit 1
+fi
+PYTHON=''
+for candidate in "$HOME/Library/Application Support/DoubaoWork/sandbox_runtime/bases/"*/bin/python3; do
+  if [ -x "$candidate" ]; then PYTHON="$candidate"; break; fi
+done
+if [ -z "$PYTHON" ]; then PYTHON="$(command -v python3 || true)"; fi
+if [ -z "$PYTHON" ]; then printf '%s\n' 'Python 3 is required.' >&2; exit 1; fi
+exec "$PYTHON" "$ROOT/scripts/multi-autostart-control.py" "$ACTION" --runtime "$RUNTIME"

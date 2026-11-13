@@ -35,6 +35,12 @@ jobs:
           python3 scripts/test-community-pac-tools.py
           node scripts/test-proxy-route.js
 
+      - name: Check primary/backup routing and private runtime helpers
+        run: |
+          python3 scripts/test-multi-server-manager.py -v
+          python3 scripts/test-multi-runtime.py
+          bash -n proxy-service
+
       - name: Run go vet
         run: go vet ./...
 

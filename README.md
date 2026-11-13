@@ -64,6 +64,7 @@ apps/ios/          `iOS 原生应用与 Packet Tunnel 扩展`
 - [应用代理与同机部署](./docs/proxy.md)
 - [全局代理、指定网站与通配符规则](./docs/proxy-scopes.md)
 - [完整社区PAC、AI/GitHub/X与Meta域名清单及查询命令](./examples/community-pac/README.md)
+- [macOS登录启动与HTTP代理主备切换](./examples/multi-server/README.md)
 - [Linux TCP默认BBR与进程级恢复](./docs/tcp-bbr.md)
 - [安全与威胁模型](./docs/security.md)
 - [连接、资源与网络排障](./docs/troubleshooting.md)
@@ -102,6 +103,10 @@ go run ./cmd/client -mode proxy -server 127.0.0.1:18888 \
 ```
 
 浏览器手动代理设为 `127.0.0.1:8888`，或自动代理配置 URL 设为 `http://127.0.0.1:8090/proxy.pac`。可通过 `-rules-file examples/proxy-domains.txt` 加载规则。完整[分流与全局模式说明](./docs/proxy-scopes.md)包含 macOS 启动命令及 HTTPS/IPv6 范围。
+
+## macOS HTTP代理主备与登录启动
+
+已有私有运行目录可用 `./proxy-service status|start|stop|primary|backup|auto` 管理。主备选择器只为新连接选择健康TCP后端，不重放数据，也不在优先级变化时迁移既有连接；这不是负载均衡或全局TUN。仓库包含通用辅助源码和无私人地址的配置示例，不包含密码、生产配置、编译客户端或系统授权，部署前提与验收范围见[主备部署说明](./examples/multi-server/README.md)。
 
 ## 域名代理查询
 
