@@ -30,9 +30,15 @@ def cfg():
 
 
 def connection_for(config):
-    if config['mode'] not in ('direct', 'multi'):
-        raise ValueError('This example supports random direct TCP or multi, not legacy SSH')
+    if config['mode'] not in ('direct', 'multi', 'domain'):
+        raise ValueError('This example supports random direct TCP, multi or domain, not legacy SSH')
     endpoint(config['server'])
+    if config['mode']=='domain':
+        if config['server']!='127.0.0.1:8888' or not config.get('servers'):raise ValueError('Invalid domain HTTP front')
+        for value in config['servers']:endpoint(value)
+        domain_config=json.loads((BASE/'multi-server.json').read_text())['domain_routes']
+        return {'local_http_proxy':'127.0.0.1:8888','transport':'random-tcp-domain-routing','servers':config['servers'],
+                'domain_defaults':{name:group['default_server'] for name,group in domain_config['groups'].items()}}
     if config['mode'] == 'multi':
         if config['server'] != '127.0.0.1:18900':
             raise ValueError('Invalid selector endpoint')

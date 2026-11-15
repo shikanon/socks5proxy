@@ -106,7 +106,9 @@ go run ./cmd/client -mode proxy -server 127.0.0.1:18888 \
 
 ## macOS HTTP代理主备与登录启动
 
-已有私有运行目录可用 `./proxy-service status|start|stop|primary|backup|auto` 管理。主备选择器只为新连接选择健康TCP后端，不重放数据，也不在优先级变化时迁移既有连接；这不是负载均衡或全局TUN。仓库包含通用辅助源码和无私人地址的配置示例，不包含密码、生产配置、编译客户端或系统授权，部署前提与验收范围见[主备部署说明](./examples/multi-server/README.md)。
+已有私有运行目录可用 `./proxy-service status|latency|routes|start|stop|primary|backup|backup2|auto` 管理。无域名模式时支持30分钟HTTPS响应择优；启用 `domain_routes` 后，HTTP/CONNECT入口按域名组独立探针和默认优先/故障回退，不再共用全局速度排序。只为新连接选择后端，不重放数据，也不因优先级变化迁移既有连接；这不是负载均衡或全局TUN。仓库包含通用辅助源码和无私人地址的配置示例，不包含密码、生产配置、编译客户端或系统授权，部署前提与验收范围见[主备部署说明](./examples/multi-server/README.md)。
+
+Codex桌面应用及内置CLI可通过 `./codex-proxy.command` 单独使用本机HTTP代理；启动器只向目标应用传入环境，不修改系统全局环境或豆包直连设置。用 `--check` 检查继承，用 `--cli -- login status` 查询官方登录状态。代理可达、登录完成和应用功能成功是不同验收层次，见[Codex专用代理说明](./docs/codex-proxy.md)。
 
 ## 域名代理查询
 

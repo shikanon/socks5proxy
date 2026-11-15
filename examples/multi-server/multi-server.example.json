@@ -9,5 +9,16 @@
   "probe_timeout_seconds": 8,
   "connect_timeout_seconds": 3,
   "failure_threshold": 2,
-  "recovery_threshold": 2
+  "recovery_threshold": 2,
+  "latency_selection": {
+    "enabled": false,
+    "interval_seconds": 1800,
+    "url": "https://www.google.com/generate_204",
+    "samples": 3,
+    "min_successful_samples": 2,
+    "timeout_seconds": 8,
+    "switch_improvement_ratio": 0.15,
+    "switch_improvement_ms": 100,
+    "history_rounds": 48
+  }
 }

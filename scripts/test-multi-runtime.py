@@ -48,8 +48,9 @@ class RuntimeTests(unittest.TestCase):
         for path in EXAMPLE.glob('*.py'):
             ast.parse(path.read_text())
         manager = module('isolated_manager', ROOT/'scripts/multi-server-manager.py')
-        value = json.loads((EXAMPLE/'multi-server.example.json').read_text())
-        manager.validate(value)
+        for filename in ('multi-server.example.json', 'domain-server.example.json'):
+            value = json.loads((EXAMPLE/filename).read_text())
+            manager.validate(value)
         required_direct = ('cfg','save','owned','listening','start_client','stop_client','terminate','google','preflight')
         required_pac = ('state','save','start','stop_owned','restore_settings','listening')
         self.assertTrue(all(callable(getattr(self.ctl, name)) for name in required_direct))
@@ -64,6 +65,20 @@ class RuntimeTests(unittest.TestCase):
         self.assertFalse((self.base/'before-new-server').exists())
         with self.assertRaises(ValueError):
             self.ctl.connection_for({'mode':'multi','server':'0.0.0.0:18900','servers':[]})
+
+    def test_domain_example_save_has_only_public_metadata(self):
+        example = json.loads((EXAMPLE/'domain-server.example.json').read_text())
+        (self.base/'multi-server.json').write_text(json.dumps(example))
+        value = {'mode':'domain', 'server':'127.0.0.1:8888',
+                 'servers':[s['endpoint'] for s in example['servers']]}
+        self.ctl.save(value)
+        metadata = json.loads((self.base/'connection.json').read_text())
+        self.assertEqual(metadata['transport'], 'random-tcp-domain-routing')
+        self.assertEqual(metadata['domain_defaults'], {'ordinary':'backup', 'openai':'primary', 'claude':'primary'})
+        self.assertEqual(self.ctl.cfg(), value)
+        self.assertNotIn('secret', metadata)
+        with self.assertRaises(ValueError):
+            self.ctl.connection_for(dict(value, server='127.0.0.1:18900'))
 
     def test_zombie_and_foreign_process_identification(self):
         (self.base/'client.pid').write_text('123\n')

@@ -16,7 +16,7 @@ def run(args,check=True):return subprocess.run(args,capture_output=True,text=Tru
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['install','start','stop','uninstall','status','primary','backup','auto']);parser.add_argument('--runtime',required=True,type=Path);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('action',choices=['install','start','stop','uninstall','status','primary','backup','backup2','latency','auto','routes','route','route-auto','probe']);parser.add_argument('--runtime',required=True,type=Path);parser.add_argument('--group');parser.add_argument('--server');args=parser.parse_args()
     base=args.runtime.resolve();domain='gui/'+str(os.getuid());service=domain+'/'+LABEL
     plist=Path.home()/'Library/LaunchAgents'/ (LABEL+'.plist')
     manager=Path(__file__).resolve().parent/'multi-server-manager.py'
@@ -63,11 +63,45 @@ def main():
             backup=base/'launchagent.uninstalled.plist';assert not backup.exists(),'Keep previous uninstall backup'
             plist.replace(backup)
         print('Automatic primary/backup service stopped; explicit start resumes it')
-    elif args.action in ('primary','backup','auto'):
+    elif args.action in ('routes','route','route-auto','probe'):
+        cfg=json.loads((base/'multi-server.json').read_text()).get('domain_routes')
+        if not cfg or not cfg.get('enabled'):raise RuntimeError('Domain routing is not enabled')
+        if args.group and args.group not in cfg['groups']:raise RuntimeError('Unknown domain group')
+        if args.action=='routes':
+            state=json.loads((base/'multi-state.json').read_text());value=state.get('domain_routes',{})
+            if args.group:value=value.get('groups',{}).get(args.group,{})
+            print(json.dumps(value,ensure_ascii=False,indent=2))
+        else:
+            if not args.group:raise RuntimeError('--group is required')
+            path=base/('domain-probe-request.json' if args.action=='probe' else 'domain-preferred.json')
+            values=json.loads(path.read_text()) if path.exists() else {}
+            if args.action=='probe':values[args.group]=time.time_ns()
+            elif args.action=='route-auto':values.pop(args.group,None)
+            else:
+                if args.server not in cfg['groups'][args.group]['allowed_servers']:raise RuntimeError('Backend not authorized for this group')
+                values[args.group]=args.server
+            q=path.with_suffix('.tmp');q.write_text(json.dumps(values,indent=2)+'\n');q.chmod(0o600);q.replace(path)
+            print('Domain group '+args.group+' '+args.action+' saved; other groups and established sessions unchanged')
+    elif args.action in ('primary','backup','backup2','auto'):
         assert (base/'multi-server.json').is_file()
+        current_config=json.loads((base/'multi-server.json').read_text())
+        if current_config.get('domain_routes',{}).get('enabled'):
+            path=base/'domain-preferred.json';values=json.loads(path.read_text()) if path.exists() else {}
+            if args.action=='auto':values.pop('ordinary',None)
+            else:
+                if args.action not in current_config['domain_routes']['groups']['ordinary']['allowed_servers']:
+                    raise RuntimeError('Requested backend is not authorized for the ordinary group')
+                values['ordinary']=args.action
+            q=path.with_suffix('.tmp');q.write_text(json.dumps(values,indent=2)+'\n');q.chmod(0o600);q.replace(path)
+            print('Ordinary group preference updated; special domain groups unchanged');return
+        names={s['name'] for s in json.loads((base/'multi-server.json').read_text())['servers']}
+        if args.action!='auto' and args.action not in names:raise RuntimeError('Requested backend is not configured')
         preference=base/'multi-preferred'
         preference.write_text('' if args.action=='auto' else args.action+'\n');preference.chmod(0o600)
-        print('New connections now prefer '+args.action+'; existing connections are unchanged')
+        print('New connections use automatic HTTPS latency ranking with healthy fallback' if args.action=='auto' and json.loads((base/'multi-server.json').read_text()).get('latency_selection',{}).get('enabled') else 'New connections now prefer '+args.action+'; existing connections are unchanged')
+    elif args.action=='latency':
+        state=json.loads((base/'multi-state.json').read_text()) if (base/'multi-state.json').exists() else {}
+        print(json.dumps({'preferred_available':state.get('preferred_available'),'manual_preference':state.get('preference'),'state_age_seconds':time.time()-state.get('updated_at',0),'latency_selection':state.get('latency_selection',{'enabled':False})},ensure_ascii=False,indent=2))
     else:
         result=run(['/bin/launchctl','print',service],check=False)
         state=json.loads((base/'multi-state.json').read_text()) if (base/'multi-state.json').exists() else {}

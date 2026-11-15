@@ -3,13 +3,10 @@
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
 ACTION="${1:-status}"
-if [ "$#" -gt 1 ]; then
-  printf '%s\n' 'Usage: ./proxy-service [status|start|stop|auto|primary|backup]' >&2
-  exit 2
-fi
+if [ "$#" -gt 0 ]; then shift; fi
 case "$ACTION" in
-  status|start|stop|auto|primary|backup) ;;
-  *) printf '%s\n' 'Usage: ./proxy-service [status|start|stop|auto|primary|backup]' >&2; exit 2 ;;
+  status|start|stop|auto|primary|backup|backup2|latency|routes|route|route-auto|probe) ;;
+  *) printf '%s\n' 'Usage: ./proxy-service status|routes|route|route-auto|probe|start|stop|auto|primary|backup|backup2|latency [--group NAME] [--server NAME]' >&2; exit 2 ;;
 esac
 RUNTIME="$ROOT/dist/overseas-proxy"
 if [ ! -s "$RUNTIME/multi-server.json" ]; then
@@ -22,4 +19,4 @@ for candidate in "$HOME/Library/Application Support/DoubaoWork/sandbox_runtime/b
 done
 if [ -z "$PYTHON" ]; then PYTHON="$(command -v python3 || true)"; fi
 if [ -z "$PYTHON" ]; then printf '%s\n' 'Python 3 is required.' >&2; exit 1; fi
-exec "$PYTHON" "$ROOT/scripts/multi-autostart-control.py" "$ACTION" --runtime "$RUNTIME"
+exec "$PYTHON" "$ROOT/scripts/multi-autostart-control.py" "$ACTION" --runtime "$RUNTIME" "$@"

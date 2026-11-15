@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "listen": ["127.0.0.1", 18900],
+  "servers": [
+    {"name": "primary", "endpoint": "192.0.2.10:8080"},
+    {"name": "backup", "endpoint": "198.51.100.20:8080"},
+    {"name": "backup2", "endpoint": "203.0.113.30:29889"}
+  ],
+  "probe_seconds": 10,
+  "probe_timeout_seconds": 8,
+  "connect_timeout_seconds": 3,
+  "failure_threshold": 2,
+  "recovery_threshold": 2,
+  "latency_selection": {"enabled": false},
+  "domain_routes": {
+    "version": 1,
+    "enabled": true,
+    "listen": ["127.0.0.1", 8888],
+    "interval_seconds": 1800,
+    "groups": {
+      "ordinary": {
+        "default_server": "backup",
+        "allowed_servers": ["backup", "primary", "backup2"],
+        "probe_servers": ["backup", "primary", "backup2"],
+        "suffixes": [],
+        "exact_hosts": [],
+        "probes": [{"url": "https://www.google.com/generate_204", "reachable_status_codes": [204]}]
+      },
+      "openai": {
+        "default_server": "primary",
+        "allowed_servers": ["primary", "backup", "backup2"],
+        "probe_servers": ["primary", "backup", "backup2"],
+        "suffixes": ["openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "openaimerge.com", "ct.sendgrid.net", "intercom.io", "intercomcdn.com"],
+        "exact_hosts": ["humb.apple.com", "js.stripe.com", "o207216.ingest.sentry.io", "o33249.ingest.sentry.io", "rum.browser-intake-datadoghq.com", "challenges.cloudflare.com"],
+        "probes": [
+          {"url": "https://api.openai.com/v1/models", "reachable_status_codes": [401]},
+          {"url": "https://auth.openai.com/", "method": "HEAD", "reachable_status_codes": [200,301,302,307,308]}
+        ]
+      },
+      "claude": {
+        "default_server": "primary",
+        "allowed_servers": ["primary", "backup", "backup2"],
+        "probe_servers": ["primary", "backup", "backup2"],
+        "suffixes": ["anthropic.com", "claude.ai", "claude.com", "claudeusercontent.com", "claudemcpcontent.com"],
+        "exact_hosts": ["cdn.workos.com", "forwarder.workos.com", "frontend-apps-multi-region.workos.com", "images.workoscdn.com", "setup.workos.com", "workos.imgix.net"],
+        "probes": [{"url": "https://api.anthropic.com/v1/messages", "reachable_status_codes": [405]}]
+      }
+    }
+  }
+}

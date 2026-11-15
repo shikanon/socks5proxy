@@ -29,3 +29,10 @@ apps/ios/PacketTunnel/Info.plist
 # Private learning-mode token tables
 token-table.json
 .token-table-*
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+
+# Private local installation/acceptance notes; public guide is docs/codex-proxy.md
+/Codex专用代理配置.md

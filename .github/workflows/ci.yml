@@ -39,7 +39,11 @@ jobs:
         run: |
           python3 scripts/test-multi-server-manager.py -v
           python3 scripts/test-multi-runtime.py
+          python3 scripts/test-latency-selection.py -v
+          python3 scripts/test-domain-routing.py -v
+          python3 scripts/test-codex-proxy-launch.py -v
           bash -n proxy-service
+          bash -n codex-proxy.command
 
       - name: Run go vet
         run: go vet ./...
