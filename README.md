@@ -110,6 +110,10 @@ go run ./cmd/client -mode proxy -server 127.0.0.1:18888 \
 
 Codex桌面应用及内置CLI可通过 `./codex-proxy.command` 单独使用本机HTTP代理；启动器只向目标应用传入环境，不修改系统全局环境或豆包直连设置。用 `--check` 检查继承，用 `--cli -- login status` 查询官方登录状态。代理可达、登录完成和应用功能成功是不同验收层次，见[Codex专用代理说明](./docs/codex-proxy.md)。
 
+## 可选项目内组网（实验能力）
+
+`cmd/mesh` 与 `internal/mesh` 提供独立实现的节点目录、固定虚拟服务地址、mTLS权限及QUIC多流通道。不集成Tailscale/Headscale；使用既有QUIC库和标准TLS，不自行设计密码算法。默认不启用，不创建TUN，不改DNS或系统路由。它是项目内TCP服务组网，不是完整IP VPN；当前没有NAT打洞、中继或动态地址分配，也没有跨境提速结论。用法和测试边界见[项目内组网](./docs/mesh.md)。
+
 ## 域名代理查询
 
 完整社区PAC提供只读的一行查询命令：

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "id": "server",
+  "ip": "100.64.0.2",
+  "cert": "private/server.crt",
+  "key": "private/server.key",
+  "ca": "private/ca.crt",
+  "listen": "0.0.0.0:18444",
+  "endpoint": "198.51.100.20:18444",
+  "control_url": "https://203.0.113.30:18443",
+  "control_name": "control",
+  "members": [
+    {
+      "id": "client",
+      "ip": "100.64.0.1",
+      "endpoints": [
+        "192.0.2.10:18444"
+      ],
+      "ports": null
+    },
+    {
+      "id": "server",
+      "ip": "100.64.0.2",
+      "endpoints": [
+        "198.51.100.20:18444"
+      ],
+      "ports": [
+        8080
+      ]
+    },
+    {
+      "id": "control",
+      "ip": "100.64.0.3",
+      "endpoints": null,
+      "ports": null
+    }
+  ],
+  "services": [
+    {
+      "port": 8080,
+      "target": "127.0.0.1:28888",
+      "allow": [
+        "client"
+      ]
+    }
+  ]
+}

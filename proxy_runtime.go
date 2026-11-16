@@ -26,6 +26,9 @@ type ProxyOptions struct {
 	Scope     string
 	Rules     *routing.Rules
 	PACListen string // Optional loopback HTTP endpoint serving /proxy.pac.
+	// UpstreamDialContext is opt-in and applies only to the remote proxy hop.
+	// Direct website traffic and server-side destination dialing never use it.
+	UpstreamDialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 func (o ProxyOptions) normalized() (ProxyOptions, error) {

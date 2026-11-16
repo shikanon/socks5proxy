@@ -51,6 +51,12 @@ jobs:
       - name: Run tests
         run: go test -race -timeout 60s ./...
 
+      - name: Build optional application-scoped mesh
+        run: |
+          go test -race -timeout 60s ./internal/mesh
+          go build -o /tmp/socks5proxy-mesh ./cmd/mesh
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/socks5proxy-mesh-darwin ./cmd/mesh
+
       - name: Check daemon service definitions
         run: python3 scripts/test-client-daemon.py
 

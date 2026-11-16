@@ -36,3 +36,6 @@ __pycache__/
 
 # Private local installation/acceptance notes; public guide is docs/codex-proxy.md
 /Codex专用代理配置.md
+
+# Mesh private identities and enrollment data
+/examples/mesh/private/

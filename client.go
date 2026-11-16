@@ -114,7 +114,14 @@ func dialDestination(ctx context.Context, address, remote string, auth socks5Aut
 	if options.Scope == "rules" && !options.Rules.Match(host) {
 		return dialProxy(ctx, address, options)
 	}
-	conn, err := dialProxy(ctx, remote, options)
+	var conn net.Conn
+	if options.UpstreamDialContext != nil {
+		dialCtx, cancel := context.WithTimeout(ctx, options.DialTimeout)
+		defer cancel()
+		conn, err = options.UpstreamDialContext(dialCtx, "tcp", remote)
+	} else {
+		conn, err = dialProxy(ctx, remote, options)
+	}
 	if err != nil {
 		return nil, err
 	}
