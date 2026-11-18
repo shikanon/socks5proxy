@@ -33,6 +33,14 @@ check('auth.openai.com', directive);
 check('auth0.openai.com', directive);
 check('raw.githubusercontent.com', directive);
 check('release-assets.githubusercontent.com', directive);
+// GitHub OAuth returns to ChatGPT; choose by actual host, not issuer/query text.
+// Synthetic values only: never replay or persist a real authorization code.
+check('chatgpt.com', directive, 'https://chatgpt.com/connector_platform_oauth_redirect?code=TEST_ONLY&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth&state=TEST_ONLY');
+check('github.com', directive, 'https://github.com/login/oauth/authorize?client_id=TEST_ONLY');
+for (const host of ['api.github.com', 'codeload.github.com', 'lfs.github.com', 'api.mcp.github.com', 'npm.pkg.github.com', 'github.githubassets.com', 'avatars.githubusercontent.com', 'copilot-proxy.githubusercontent.com', 'api.githubcopilot.com']) check(host, directive);
+check('default.exp-tas.com', directive);
+check('unrelated.webpubsub.azure.com', 'DIRECT');
+check('unrelated.blob.core.windows.net', 'DIRECT');
 check('localhost', 'DIRECT', 'http://localhost:1455/auth/callback');
 const community = sandbox.CommunityFindProxyForURL;
 sandbox.CommunityFindProxyForURL = () => 'FALLBACK';

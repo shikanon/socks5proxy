@@ -276,6 +276,44 @@ def main():
                 return result
             finally:
                 with process_lock:probe_processes.discard(process)
+    def egress_poll():
+        import tempfile
+        sources=[('cloudflare','https://www.cloudflare.com/cdn-cgi/trace'),('ipinfo','https://ipinfo.io/json')]
+        while not router.stop.is_set():
+            started=time.time()
+            with domains.lock:domains.egress_running=True
+            try:
+                for server in config['servers']:
+                    samples=[]
+                    for source,url in sources:
+                        if router.stop.is_set():return
+                        with tempfile.TemporaryDirectory(prefix='egress-probe-') as tmp:
+                            body_path=Path(tmp)/'body'
+                            with process_lock:
+                                if router.stop.is_set():return
+                                _,port,child=children[server['name']]
+                                command=['/usr/bin/curl','--silent','--show-error','--noproxy','','--http1.1',
+                                         '--proxy','http://127.0.0.1:'+str(port),'--connect-timeout','4','--max-time','12',
+                                         '--max-filesize','8192','--proto','=https','--output',str(body_path),
+                                         '--write-out','%{http_code}|%{ssl_verify_result}','--',url]
+                                process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE);probe_processes.add(process)
+                            try:
+                                try:output,_=process.communicate(timeout=14)
+                                except subprocess.TimeoutExpired:process.kill();output,_=process.communicate()
+                                fields=output.decode().strip().split('|')
+                                body=body_path.read_bytes()[:8192].decode('utf-8',errors='replace') if body_path.exists() else ''
+                                samples.append(DOMAIN.parse_egress(source,process.returncode,fields[0] if len(fields)==2 else '000',fields[1] if len(fields)==2 else '-1',body))
+                            finally:
+                                with process_lock:probe_processes.discard(process)
+                    domains.set_egress(server['name'],samples,time.time())
+            except Exception:
+                # Failure invalidates all uncertain eligibility; no old geography cache reused.
+                for server in config['servers']:domains.set_egress(server['name'],[],time.time())
+                print(json.dumps({'event':'egress_check_error'}),flush=True)
+            finally:
+                with domains.lock:
+                    domains.egress_running=False;domains.egress_next_at=max(started+1800,time.time()+1)
+            if router.stop.wait(max(1,started+1800-time.time())):break
     def domain_poll(group):
         g=domain_config['groups'][group];last_request=domains.groups[group].get('last_manual_request')
         while not router.stop.is_set():
@@ -326,6 +364,8 @@ def main():
                 with process_lock:return ('127.0.0.1',children[name][1])
             http_front=DOMAIN.HTTPFront(domains,backend,lambda:{n:v['healthy'] for n,v in router.snapshot()['servers'].items()})
             http_front.start()
+            if domain_config.get('egress_policy'):
+                thread=threading.Thread(target=egress_poll,daemon=True);domain_threads.append(thread);thread.start()
             for group in domain_config['groups']:
                 thread=threading.Thread(target=domain_poll,args=(group,),daemon=True);domain_threads.append(thread);thread.start()
         previous_choice=None;last_reconcile=0

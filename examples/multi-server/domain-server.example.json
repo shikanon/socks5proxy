@@ -26,25 +26,25 @@
         "exact_hosts": [],
         "probes": [{"url": "https://www.google.com/generate_204", "reachable_status_codes": [204]}]
       },
-      "openai": {
+      "overseas_ai": {
         "default_server": "primary",
         "allowed_servers": ["primary", "backup", "backup2"],
         "probe_servers": ["primary", "backup", "backup2"],
-        "suffixes": ["openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "openaimerge.com", "ct.sendgrid.net", "intercom.io", "intercomcdn.com"],
-        "exact_hosts": ["humb.apple.com", "js.stripe.com", "o207216.ingest.sentry.io", "o33249.ingest.sentry.io", "rum.browser-intake-datadoghq.com", "challenges.cloudflare.com"],
+        "suffixes": ["openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "oaistatsig.com", "openaimerge.com", "ct.sendgrid.net", "intercom.io", "intercomcdn.com", "anthropic.com", "claude.ai", "claude.com", "claudeusercontent.com", "claudemcpcontent.com"],
+        "exact_hosts": ["humb.apple.com", "js.stripe.com", "o207216.ingest.sentry.io", "o33249.ingest.sentry.io", "rum.browser-intake-datadoghq.com", "challenges.cloudflare.com", "cdn.workos.com", "forwarder.workos.com", "frontend-apps-multi-region.workos.com", "images.workoscdn.com", "setup.workos.com", "workos.imgix.net"],
         "probes": [
           {"url": "https://api.openai.com/v1/models", "reachable_status_codes": [401]},
-          {"url": "https://auth.openai.com/", "method": "HEAD", "reachable_status_codes": [200,301,302,307,308]}
+          {"url": "https://auth.openai.com/", "method": "HEAD", "reachable_status_codes": [200,301,302,307,308]},
+          {"url": "https://api.anthropic.com/v1/messages", "reachable_status_codes": [405]}
         ]
-      },
-      "claude": {
-        "default_server": "primary",
-        "allowed_servers": ["primary", "backup", "backup2"],
-        "probe_servers": ["primary", "backup", "backup2"],
-        "suffixes": ["anthropic.com", "claude.ai", "claude.com", "claudeusercontent.com", "claudemcpcontent.com"],
-        "exact_hosts": ["cdn.workos.com", "forwarder.workos.com", "frontend-apps-multi-region.workos.com", "images.workoscdn.com", "setup.workos.com", "workos.imgix.net"],
-        "probes": [{"url": "https://api.anthropic.com/v1/messages", "reachable_status_codes": [405]}]
       }
+    },
+    "egress_policy": {
+      "group": "overseas_ai",
+      "denied_country_codes": ["HK", "MO"],
+      "unknown_action": "deny",
+      "interval_seconds": 1800,
+      "max_age_seconds": 3600
     }
   }
 }

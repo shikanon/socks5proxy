@@ -38,7 +38,17 @@
     "frontend-apps-multi-region.workos.com", "images.workoscdn.com",
     "setup.workos.com", "workos.imgix.net", "humb.apple.com", "js.stripe.com",
     "o207216.ingest.sentry.io", "o33249.ingest.sentry.io",
-    "rum.browser-intake-datadoghq.com", "github-cloud.s3.amazonaws.com"
+    "rum.browser-intake-datadoghq.com", "github-cloud.s3.amazonaws.com",
+    "default.exp-tas.com",
+    "mavenregistryv2prod.blob.core.windows.net", "npmregistryv2prod.blob.core.windows.net",
+    "nugetregistryv2prod.blob.core.windows.net", "rubygemsregistryv2prod.blob.core.windows.net",
+    "production-copilot-host-centralus.webpubsub.azure.com",
+    "production-copilot-host-centralus-02.webpubsub.azure.com",
+    "production-copilot-host-eastasia.webpubsub.azure.com",
+    "production-copilot-host-austriaeast.webpubsub.azure.com",
+    "production-copilot-host-westus.webpubsub.azure.com",
+    "production-copilot-host-westus3.webpubsub.azure.com",
+    "production-copilot-host.webpubsub.azure.com"
   ],
   "community": {
     "project": "gfwlist/gfwlist",
@@ -51,6 +61,8 @@
     "https://help.openai.com/en/articles/9247338-network-recommendations-for-chatgpt-errors-on-web-and-apps",
     "https://developers.openai.com/codex/auth",
     "https://code.claude.com/docs/en/network-config?nl=1",
-    "https://docs.github.com/en/actions/reference/runners/github-hosted-runners"
+    "https://docs.github.com/en/actions/reference/runners/github-hosted-runners",
+    "https://api.github.com/meta",
+    "https://docs.github.com/en/copilot/reference/copilot-allowlist-reference"
   ]
 }

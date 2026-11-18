@@ -95,7 +95,7 @@ python3 scripts/multi-autostart-control.py install --runtime dist/overseas-proxy
 
 ## 可选的域名分组探针与切换
 
-`domain-server.example.json` 是三节点文档地址示例：普通组默认 `backup`，OpenAI和Claude默认 `primary`。文档地址不能实际联网，部署者须替换为自己已验证的端点；配置不含秘密。默认基础示例仍保持域名功能未启用。
+`domain-server.example.json` 是三节点文档地址示例：只有 `ordinary`（普通）和 `overseas_ai`（海外AI）两类。普通默认 `backup`，海外AI默认 `primary`；OpenAI/Codex和Claude共用节点、手动偏好及整组探针。文档地址不能实际联网，部署者须替换为自己已验证的端点；配置不含秘密。默认基础示例仍保持域名功能未启用。
 
 启用 `domain_routes.enabled=true` 后，数据路径变为：
 
@@ -103,11 +103,13 @@ python3 scripts/multi-autostart-control.py install --runtime dist/overseas-proxy
 
 - 8888由Python前置入口持有，不再由Go client连至18900统一选择后端。18900旧选择器保留兼容，但不是域名流量的实际路径。
 - 普通HTTP按首个绝对URL分组，下游Go client每条普通HTTP连接仅处理一次请求；HTTPS按CONNECT目标host分组，不解密TLS、不读取HTTPS正文。
-- 精确主机先匹配，后缀使用点边界和最长匹配；未命中属于 `ordinary`。共享服务只列精确主机，不扩大整个第三方域名。示例将共享的 `challenges.cloudflare.com`归于openai，不代表能按一个共享host区分服务或按进程选组。
+- 精确主机先匹配，后缀使用点边界和最长匹配；未命中属于 `ordinary`。共享服务只列精确主机，不扩大整个第三方域名。示例将共享的 `challenges.cloudflare.com`归于海外AI，不代表能按一个共享host区分服务或按进程选组。
 - PAC仍决定代理还是直连。完整社区清单与豆包优先DIRECT不拆分；域名组只决定已进入8888的流量使用哪个后端。
 - 各组每1800秒启动一轮，3遍候选×探针，只读GET/HEAD、12秒预算、TLS验证与64KiB响应上限；多探针以最差状态合并，至少2个可达样本才标为reachable。完成后保留当前轮原始结果和下一轮时间；没有全局48轮历史的同等承诺。
 - 自动模式依次选择手动偏好、组默认、允许候选；响应毫秒用于诊断，不按速度替换可用默认。域名模式会暂停旧全局latency排序，不应同时把两种模式称为已生效。
 - `allowed_servers`限制流量候选，必须包含默认且是 `probe_servers`子集。普通组同时参考Google健康；特殊组已探测后使用自己的reachable/unknown状态，不被Google页面单独失败连带下线。unknown不代表应用成功。
+- 海外AI组使用 `egress_policy`：两处固定HTTPS来源Cloudflare trace/IPinfo的出口IP与ISO国家码一致，才形成地区验证。HK/MO排除、未知/冲突/失败/未来时间/过期地区均不授权。每1800秒重新检查，最多3600秒有效；管理器重启不恢复磁盘中的地区证据，必须重新实时核验。TLS验证不能关闭，查询不跟随重定向、不保存原正文或授权参数。手动节点选择也不能绕过该门槛。地区识别是两个数据源的共识，不是实时平台资格或每条连接恒定出口的保证。
+- OpenAI、认证和Claude三个探针共同决定海外AI组状态：任一服务失败或明确地区拒绝影响整组。所有候选不满足条件时返回503、不直连；普通组仍独立选择。合并后可能牺牲单个服务可用性，这是整组切换策略的明确边界。
 - 明确地区拒绝记录为policy_denied，普通403/429记录为unknown；401/405只证明无凭据端点网络响应，不证明地区资格、登录或功能。策略拒绝节点不会用于该组流量；仅在管理员授权的候选中回退，不保证能满足平台地区或账户政策。
 - CONNECT在200与应用字节提交前可尝试其他候选，失败有20秒组内连接冷却；提交后不重放。无候选返回503，不偷偷直连。已有连接固定原节点，管理器重载或真实故障仍可能断开连接。
 - 前置层128并发，头上限32KiB和5秒总预算；双向流式转发共享300秒空闲时钟、有限缓冲与半关闭保护。
@@ -115,10 +117,10 @@ python3 scripts/multi-autostart-control.py install --runtime dist/overseas-proxy
 
 ```bash
 ./proxy-service routes
-./proxy-service routes --group openai
-./proxy-service route --group openai --server backup
-./proxy-service route-auto --group openai
-./proxy-service probe --group claude
+./proxy-service routes --group overseas_ai
+./proxy-service route --group overseas_ai --server primary
+./proxy-service route-auto --group overseas_ai
+./proxy-service probe --group overseas_ai
 ```
 
 这些命令分别查询、保存该组偏好、取消偏好或请求一轮探针，不重启管理器。`primary`/`backup`/`backup2`及`auto`在域名模式只修改ordinary组，特殊组不受影响。JSON配置文件本身不热加载；必须受控重载，入口变更会影响已有连接，应保留旧配置和恢复路径。状态是本机可信文件，不是远端应用登录凭证。

@@ -74,7 +74,7 @@ class RuntimeTests(unittest.TestCase):
         self.ctl.save(value)
         metadata = json.loads((self.base/'connection.json').read_text())
         self.assertEqual(metadata['transport'], 'random-tcp-domain-routing')
-        self.assertEqual(metadata['domain_defaults'], {'ordinary':'backup', 'openai':'primary', 'claude':'primary'})
+        self.assertEqual(metadata['domain_defaults'], {'ordinary':'backup', 'overseas_ai':'primary'})
         self.assertEqual(self.ctl.cfg(), value)
         self.assertNotIn('secret', metadata)
         with self.assertRaises(ValueError):

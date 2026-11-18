@@ -1,0 +1,15 @@
+{
+  "ok": true, "installed": true, "loaded": true, "running": true,
+  "autostart": true, "paused": false, "fresh": true, "ready": true,
+  "http_listening": true, "pac_listening": true, "pac_enabled": true,
+  "doubao_direct": true, "age_seconds": 1, "interval_seconds": 1800,
+  "nodes": [
+    {"id":"primary","endpoint":"192.0.2.10:8080","healthy":true},
+    {"id":"backup","endpoint":"198.51.100.20:8080","healthy":true},
+    {"id":"backup2","endpoint":"203.0.113.30:8080","healthy":false}
+  ],
+  "groups": [
+    {"id":"ordinary","default_server":"backup","allowed_servers":["primary","backup","backup2"],"selected_server":"backup","selected_endpoint":"198.51.100.20:8080","manual":null,"probing":false,"next_probe":null,"nodes":[{"id":"primary","state":"reachable","response_ms":284},{"id":"backup","state":"reachable","response_ms":76},{"id":"backup2","state":"unreachable","response_ms":null}]},
+    {"id":"overseas_ai","default_server":"primary","allowed_servers":["primary","backup","backup2"],"eligible_servers":["primary"],"egress_required":true,"selected_server":"primary","selected_endpoint":"192.0.2.10:8080","manual":null,"probing":false,"next_probe":null,"nodes":[{"id":"primary","state":"reachable","response_ms":312,"country":"US","egress_state":"verified","eligible":true},{"id":"backup","state":"unknown","response_ms":null,"country":null,"egress_state":"unknown","eligible":false},{"id":"backup2","state":"policy_denied","response_ms":null,"country":"HK","egress_state":"denied","eligible":false}]}
+  ]
+}

@@ -14,6 +14,10 @@ ChatGPT/Codex 规则包含 `openai.com`（含 `auth.openai.com`、`auth0.openai.
 
 GitHub 规则包含 `github.com`、`githubusercontent.com`、`githubassets.com`、`github.io`、`githubapp.com`、`github.dev`、`githubcopilot.com`、`ghcr.io`、`githubstatus.com`，以及精确主机 `github-cloud.s3.amazonaws.com`。HTTPS clone、API、raw、release、LFS 与包资源覆盖在这些域名内；SSH Git 和不读取系统代理的工具不由 PAC 自动接管。
 
+根据GitHub官方 `/meta` 与Copilot清单，另显式加入 `default.exp-tas.com`、4个Packages存储精确主机（`mavenregistryv2prod`、`npmregistryv2prod`、`nugetregistryv2prod`、`rubygemsregistryv2prod`下的`blob.core.windows.net`主机），以及清单列出的7个`production-copilot-host*.webpubsub.azure.com`具体主机。没有接管整个Azure、`windows.net`或`exp-tas.com`后缀；这不是覆盖所有Codespaces、Actions、Enterprise或语音依赖的无限清单。
+
+GitHub连接器OAuth返回地址 `https://chatgpt.com/connector_platform_oauth_redirect` 属于 `chatgpt.com`，已由ChatGPT后缀规则覆盖。URL中issuer或路径提到GitHub不会改变实际目标主机；GitHub网站流量仍按普通组默认，ChatGPT回调按OpenAI组默认，未修改分组偏好。测试仅使用合成参数或无凭据基础地址，不保存或重放真实code/state。首页连通、PAC命中不能证明授权码有效、浏览器会话一致或连接器业务完成。授权回调异常需要从同一浏览器会话重新发起官方连接流程，不应把旧回调URL当作通用测速地址。
+
 ## X 与 Meta 服务分组
 
 X/Twitter：`x.com`、`twitter.com`、`t.co`、`twimg.com`、`tweetdeck.com`，包含子域名中的图片、视频、API等主机。
@@ -74,3 +78,4 @@ python3 scripts/serve-community-pac.py
 - Codex 登录及本地回调：<https://developers.openai.com/codex/auth>。
 - Claude 网络依赖：<https://code.claude.com/docs/en/network-config?nl=1>。
 - GitHub 下载/Packages/LFS 等：<https://docs.github.com/en/actions/reference/runners/github-hosted-runners>。不同业务仍可能使用不在本清单中的第三方域名。
+- GitHub当前服务域名：<https://api.github.com/meta>；Copilot精确依赖：<https://docs.github.com/en/copilot/reference/copilot-allowlist-reference>。只使用域名字段，不把返回的共享IP范围加入代理。

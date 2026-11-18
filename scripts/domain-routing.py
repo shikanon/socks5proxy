@@ -15,6 +15,45 @@ from urllib.parse import urlsplit
 
 HEADER_LIMIT = 32768
 REGION_CODES = {'unsupported_country_region_territory', 'unsupported_country', 'country_not_supported', 'unsupported_region'}
+EGRESS_SOURCES = {'cloudflare', 'ipinfo'}
+COUNTRY_CODES = set('AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'.split())
+
+
+def parse_egress(source, exit_code, http_code, tls, body):
+    """Only verified HTTPS responses; no raw body, headers, query or credentials retained."""
+    result = {'source': source, 'country': None, 'ip': None, 'valid': False}
+    if source not in EGRESS_SOURCES or exit_code != 0 or http_code != '200' or tls != '0':
+        return result
+    try:
+        if source == 'cloudflare':
+            lines = [x.split('=', 1) for x in body.splitlines() if '=' in x]
+            if len({x[0] for x in lines}) != len(lines):return result
+            data = dict(lines);country = data.get('loc');address = data.get('ip')
+        else:
+            data = json.loads(body);country = data.get('country');address = data.get('ip')
+        if country not in COUNTRY_CODES or not isinstance(address, str):return result
+        ip = ipaddress.ip_address(address)
+        if not ip.is_global:return result
+        result.update(country=country, ip=str(ip), valid=True)
+    except (ValueError, TypeError, AttributeError):pass
+    return result
+
+
+def egress_consensus(samples, policy, now):
+    result = {'state': 'unknown', 'country': None, 'ip': None, 'checked_at': now,
+              'reason': 'two_source_consensus_required', 'samples': samples}
+    if len(samples) != 2 or {x.get('source') for x in samples} != EGRESS_SOURCES:return result
+    if not all(x.get('valid') is True and x.get('country') in COUNTRY_CODES for x in samples):return result
+    if len({(x.get('country'), x.get('ip')) for x in samples}) != 1:return result
+    country, address = samples[0]['country'], samples[0]['ip']
+    try:
+        if not ipaddress.ip_address(address).is_global:return result
+    except (ValueError, TypeError):return result
+    denied = country in policy['denied_country_codes']
+    result.update(state='denied' if denied else 'verified', country=country, ip=address,
+                  reason='country_denied' if denied else 'HTTPS_two_source_consensus')
+    return result
+
 
 
 def host_name(value):
@@ -41,6 +80,13 @@ def validate(raw,servers):
     if raw.get('listen')!=['127.0.0.1',8888]:raise ValueError('Domain front must use fixed local HTTP8888')
     if raw.get('interval_seconds')!=1800:raise ValueError('Domain probes must run every1800seconds')
     groups=raw.get('groups');names={s['name'] for s in servers}
+    policy=raw.get('egress_policy')
+    if policy is not None:
+        if (not isinstance(policy,dict) or set(groups or {})!={'ordinary','overseas_ai'}
+            or policy.get('group')!='overseas_ai' or policy.get('unknown_action')!='deny'
+            or policy.get('denied_country_codes')!=['HK','MO']
+            or policy.get('interval_seconds')!=1800 or policy.get('max_age_seconds')!=3600):
+            raise ValueError('Strict two-class egress policy required')
     if not isinstance(groups,dict) or not 1<=len(groups)<=8 or 'ordinary' not in groups:raise ValueError('Missing ordinary group')
     suffixes=set();exact=set()
     for name,g in groups.items():
@@ -168,6 +214,9 @@ class Routes:
     def __init__(self,config,servers,cache=None):
         self.config=validate(config,servers);self.servers={s['name']:dict(s) for s in servers}
         self.lock=threading.RLock();self.manual={};self.counts={n:0 for n in self.config['groups']};self.recent=[];self.transport_failures={}
+        self.egress={};self.egress_policy=self.config.get('egress_policy')
+        # Never restore country verification from disk. Each manager start checks live exits.
+        self.egress_running=False;self.egress_next_at=None
         self.fingerprint=hashlib.sha256(json.dumps({'config':config,'servers':servers},sort_keys=True).encode()).hexdigest()
         self.groups={n:{'last_probe_at':None,'next_probe_at':None,'round_count':0,'running':False,'nodes':{},'last_error':''} for n in self.config['groups']}
         if isinstance(cache,dict) and cache.get('fingerprint')==self.fingerprint:
@@ -193,6 +242,20 @@ class Routes:
                     if n in self.groups and (s is None or s in self.config['groups'][n]['allowed_servers']):
                         if s is not None:clean[n]=s
             self.manual=clean
+    def set_egress(self,server,samples,now):
+        with self.lock:
+            if self.egress_policy and server in self.servers:
+                self.egress[server]=egress_consensus(samples,self.egress_policy,now)
+    def egress_status(self,server,now=None):
+        now=time.time() if now is None else now
+        with self.lock:
+            if not self.egress_policy:return {'state':'not_required','eligible':True}
+            record=dict(self.egress.get(server,{'state':'unknown','country':None,'ip':None,'checked_at':None,'reason':'not_checked'}))
+            checked=record.get('checked_at')
+            if checked is None or not 0<=now-checked<self.egress_policy['max_age_seconds']:
+                record.update(state='unknown',reason='expired_or_not_checked')
+            record['eligible']=record['state']=='verified' and record.get('country') not in self.egress_policy['denied_country_codes']
+            return record
     def candidates(self,group,healthy):
         with self.lock:
             g=self.config['groups'][group]
@@ -200,7 +263,8 @@ class Routes:
             if group in self.manual:order=[self.manual[group]]+[s for s in order if s!=self.manual[group]]
             states=self.groups[group]['nodes']
             return [self.servers[n] for n in order
-                    if self.transport_failures.get((group,n),{}).get('retry_at',0)<=time.time()
+                    if (not self.egress_policy or group!=self.egress_policy['group'] or self.egress_status(n)['eligible'])
+                    and self.transport_failures.get((group,n),{}).get('retry_at',0)<=time.time()
                     and (healthy.get(n,False) if group=='ordinary' else bool(states.get(n,{}).get('state') in ['reachable','unknown'] or (not states.get(n) and healthy.get(n,False))))
                     and states.get(n,{}).get('state') not in ['policy_denied','unreachable']]
     def transport_failure(self,group,server):
@@ -240,6 +304,8 @@ class Routes:
                 g=self.config['groups'][name];choices=self.candidates(name,healthy)
                 result[name]=dict(info,default_server=g['default_server'],default_endpoint=self.servers[g['default_server']]['endpoint'],
                                   allowed_servers=g['allowed_servers'],manual_preference=self.manual.get(name),
+                                  eligible_servers=[n for n in g['allowed_servers'] if not self.egress_policy or name!=self.egress_policy['group'] or self.egress_status(n)['eligible']],
+                                  egress_required=bool(self.egress_policy and name==self.egress_policy['group']),
                                   preferred_available=choices[0]['name'] if choices else None,
                                   preferred_endpoint=choices[0]['endpoint'] if choices else None,
                                   next_probe_local=datetime.fromtimestamp(info['next_probe_at']).astimezone().isoformat(timespec='seconds') if info['next_probe_at'] else None,
@@ -247,6 +313,8 @@ class Routes:
                                   transport_cooldowns={n:v for (group,n),v in self.transport_failures.items() if group==name and v['retry_at']>time.time()},
                                   selection_policy='manual_then_default_then_fallback',availability_source='google_health_and_group_probe' if name=='ordinary' else 'independent_group_probe')
             return {'enabled':True,'http_proxy':'127.0.0.1:8888','interval_seconds':1800,'groups':result,'recent_routes':list(self.recent),
+                    'egress_verification':{'enabled':bool(self.egress_policy),'running':self.egress_running,'next_probe_at':self.egress_next_at,
+                                           'nodes':{n:self.egress_status(n) for n in self.servers}},
                     'TLS_interception':False,'application_authentication_verified':False}
 
 

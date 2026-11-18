@@ -79,6 +79,15 @@ def main():
             elif args.action=='route-auto':values.pop(args.group,None)
             else:
                 if args.server not in cfg['groups'][args.group]['allowed_servers']:raise RuntimeError('Backend not authorized for this group')
+                if cfg.get('egress_policy',{}).get('group')==args.group:
+                    current=json.loads((base/'multi-state.json').read_text())
+                    evidence=current.get('domain_routes',{}).get('egress_verification',{}).get('nodes',{}).get(args.server,{})
+                    age=time.time()-evidence.get('checked_at',0)
+                    state_age=time.time()-current.get('updated_at',0)
+                    if (not 0<=state_age<8 or not 0<=age<cfg['egress_policy']['max_age_seconds']
+                        or evidence.get('eligible') is not True or evidence.get('state')!='verified'
+                        or evidence.get('country') in cfg['egress_policy']['denied_country_codes']):
+                        raise RuntimeError('Backend egress country not verified or excluded; preference unchanged')
                 values[args.group]=args.server
             q=path.with_suffix('.tmp');q.write_text(json.dumps(values,indent=2)+'\n');q.chmod(0o600);q.replace(path)
             print('Domain group '+args.group+' '+args.action+' saved; other groups and established sessions unchanged')
